@@ -1,5 +1,8 @@
 import json
 import logging
+import time
+import uuid
+import os
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
@@ -21,10 +24,21 @@ from rest_framework.exceptions import NotAuthenticated
 from rest_framework.filters import OrderingFilter
 from rest_framework.mixins import CreateModelMixin
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.serializers import PrimaryKeyRelatedField
 from rest_framework.viewsets import GenericViewSet, ModelViewSet, ReadOnlyModelViewSet
+
+"""
+To create high-level endpoint
+"""
+from rest_framework.views import APIView  
+from rest_framework import status  
+from rest_framework.test import force_authenticate
+from rest_framework.test import APIRequestFactory
+from celery.result import AsyncResult
+from celery import shared_task
 
 from api.serializers import (
     AlignSerializer,
@@ -1346,3 +1360,231 @@ class RegenerableAuthToken(ObtainAuthToken):
             token, created = Token.objects.get_or_create(user=user)
 
         return Response({'token': token.key})
+
+
+class ProjectandDocumentCreateView(APIView):
+    """
+    """
+
+    parser_classes = [MultiPartParser, FormParser]
+    
+    #  @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        # Extract the nested data for project and document
+        project_json = request.data.get("project")
+        try:
+            project_data = json.loads(project_json)
+        except json.JSONDecodeError:
+            return Response(
+                {"detail": "Invalid JSON provided for project."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        document_json = request.data.get("document")
+        try:
+            document_data = json.loads(document_json)
+        except json.JSONDecodeError:
+            return Response(
+                {"detail": "Invalid JSON provided for document."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if project_data is None or document_data is None:
+            return Response(
+                {"detail": "Both project and document data must be provided."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        DummyView = type("DummyView", (APIView,), {"kwargs": {"document_pk": None}})
+        
+        # First, create the project using its serializer.
+        project_serializer = ProjectSerializer(data=project_data, context={'view': self, 'user': request.user})
+        if not project_serializer.is_valid():
+            return Response(project_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        project = project_serializer.save()
+        
+        # Now, create the document. Here we attach the created project (for example, via its ID).
+        # Adjust the key name if your Document model expects a different field (e.g., 'project_id').
+        document_data["project"] = project.slug
+        
+        document_serializer = DocumentSerializer(data=document_data, context={'view': self, 'user': request.user})
+        if not document_serializer.is_valid():
+            # If document creation fails, the transaction will roll back the project creation.
+            return Response(document_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        document = document_serializer.save()
+
+
+        #  Image loading.
+        part = None
+        if "image" in request.FILES:
+            #  Creates a dummy view with document.pk since the serializer requires data in this format. 
+            DummyView = type("DummyView", (APIView,), {"kwargs": {"document_pk": document.pk}})
+            part_serializer = PartSerializer(
+                data=request.data,
+                context = {'view': DummyView, 'user': request.user, 'request': request}
+            )
+            if not part_serializer.is_valid():
+                return Response(part_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            #  The creates method of the part serializer launches a Celery chain. The id of the chain is saved in the part object under convert_chain_task_id
+            part = part_serializer.save()
+ 
+        #  Uses the id of the asynchronous task to check its status
+        if hasattr(part, "convert_chain_task_id"):
+            async_result = AsyncResult(part.convert_chain_task_id)
+            poll_interval = 0.5
+            max_wait = 60
+            elapsed = 0
+
+            #  Polling of the status of the asynchronous task
+            while not async_result.ready() and elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+            #  If max wait time is over, returns Error
+            if not async_result.ready():
+                return Response(
+                    {"detail": "Image conversion failed or timed out."},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+        # 7. Create the OCR models.
+        # a) Segmentation model.
+        segmentation_model = None
+        segmentation_model_data = request.data.get("segmentation_model", None)
+        if segmentation_model_data:
+            try:
+                seg_data = json.loads(segmentation_model_data)
+            except json.JSONDecodeError:
+                return Response(
+                    {"detail": "Invalid JSON provided for segmentation_model."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Enforce the job to be "Segment".
+            seg_data["job"] = seg_data.get("job", "Segment")
+            if "segmentation_model_file" in request.FILES:
+                seg_data["file"] = request.FILES["segmentation_model_file"]
+            seg_serializer = OcrModelSerializer(
+                data=seg_data, context={'view': self, 'request': request}
+            )
+            if not seg_serializer.is_valid():
+                return Response(seg_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            segmentation_model = seg_serializer.save()
+
+        # b) Transcription model.
+        transcription_model = None
+        transcription_model_data = request.data.get("transcription_model", None)
+        if transcription_model_data:
+            try:
+                trans_data = json.loads(transcription_model_data)
+            except json.JSONDecodeError:
+                return Response(
+                    {"detail": "Invalid JSON provided for transcription_model."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            # Enforce the job to be "Recognize".
+            trans_data["job"] = trans_data.get("job", "Recognize")
+            if "transcription_model_file" in request.FILES:
+                trans_data["file"] = request.FILES["transcription_model_file"]
+            trans_serializer = OcrModelSerializer(
+                data=trans_data, context={'view': self, 'request': request}
+            )
+            if not trans_serializer.is_valid():
+                return Response(trans_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            transcription_model = trans_serializer.save()
+
+
+        # 9. Create the transcription object.
+        # Here we assume the transcription creation requires a parameter "transcription_name"
+        # that will be used to set the transcription text.
+        transcription_obj = None
+        if "transcription_name" in request.data:
+            transcription_serializer = TranscriptionSerializer(
+                data={"name": request.data.get("transcription_name")},
+                context={'view': DummyView, 'request': request, 'user': request.user}
+            )
+            if not transcription_serializer.is_valid():
+                return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            transcription_obj = transcription_serializer.save()
+
+        
+        #  10. Applies the segmentation model
+        data = {
+            "model": segmentation_model.pk,
+            "parts": [part.pk],
+        }
+        serializer = SegmentSerializer(context={'user': request.user, 'view': self, "document": document}, 
+                                       data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        #  This launches the segmentation process. 
+        #  The serializer, for each part in parts, executes a chain consisting of a segment task
+        #  The serializer has been modified so that it has a chain_ids attribute
+        #  where the ids of the asynchronous tasks corresponding to each part are saved. 
+        serializer.process()
+
+        #  This implements a polling mechanism to wait for the success of all the 
+        #  segmentation tasks. 
+        if hasattr(serializer, "chain_ids"):
+            async_results = [AsyncResult(chain_id) for chain_id in serializer.chain_ids]
+            poll_interval = 0.5
+            max_wait = 60
+            elapsed = 0
+            while not all(async_result.ready() for async_result in async_results) and elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+
+        #  11. Applies the transcription model
+        data = {
+            "model": transcription_model.pk,
+            "parts": [part.pk],
+            "transcription": transcription_obj.pk,
+        }
+        serializer = TranscribeSerializer(context={'user': request.user, 'view': self, "document": document}, 
+                                         data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        #  This launches the segmentation process. 
+        #  The serializer, for each part in parts, executes a chain consisting of a transcribe task
+        #  The serializer has been modified so that it has a chain_ids attribute
+        #  where the ids of the asynchronous tasks corresponding to each part are saved. 
+        serializer.process()
+
+        #  This implements a polling mechanism to wait for the success of all the 
+        #  transcription tasks. 
+        if hasattr(serializer, "chain_ids"):
+            async_results = [AsyncResult(chain_id) for chain_id in serializer.chain_ids]
+            poll_interval = 0.5
+            max_wait = 60
+            elapsed = 0
+            while not all(async_result.ready() for async_result in async_results) and elapsed < max_wait:
+                time.sleep(poll_interval)
+                elapsed += poll_interval
+
+        
+        #  Extract the transcription
+
+
+
+        transcriptions = LineTranscription.objects.filter(transcription__pk=transcription_obj.pk)
+        
+        serializer = LineTranscriptionSerializer(transcriptions, many=True, context={'view': self, 'request': request})
+        
+    
+        
+         # 8. Prepare the response.
+        response_data = {
+            "project": ProjectSerializer(project, context={'view': self}).data,
+            "document": DocumentSerializer(document, context={'view': self, 'user': request.user}).data,
+            "part": PartSerializer(part, context={'view': self, 'request': request}).data if part else None,
+            "segmentation_model": OcrModelSerializer(segmentation_model, context={'view': self}).data if segmentation_model else None,
+            "transcription_model": OcrModelSerializer(transcription_model, context={'view': self}).data if transcription_model else None,
+            "transcription": TranscriptionSerializer(transcription_obj, context={'request': request}).data if transcription_obj else None,
+            "debug": {
+                "conversion_wait_duration": elapsed,
+            },
+            "transcription": ' '.join([item.get('content', '') for item in serializer.data])
+        }
+        return Response(response_data, status=status.HTTP_201_CREATED)  
+        
+
+

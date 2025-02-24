@@ -881,6 +881,7 @@ class SegmentSerializer(ProcessSerializerMixin, serializers.Serializer):
         super().__init__(*args, **kwargs)
         self.fields['model'].queryset = OcrModel.objects.filter(job=OcrModel.MODEL_JOB_SEGMENT)
         self.fields['parts'].queryset = DocumentPart.objects.filter(document=self.document)
+        self.chain_ids = []
 
     def process(self):
         super().process()
@@ -898,7 +899,7 @@ class SegmentSerializer(ProcessSerializerMixin, serializers.Serializer):
                 ocr_model_document.save()
 
         for part in parts:
-            part.chain_tasks(
+            async_result = part.chain_tasks(
                 segment.si(instance_pk=part.pk,
                            user_pk=self.user.pk,
                            task_group_pk=self.task_group.pk,
@@ -907,6 +908,7 @@ class SegmentSerializer(ProcessSerializerMixin, serializers.Serializer):
                            text_direction=self.validated_data.get('text_direction'),
                            override=self.validated_data.get('override'))
             )
+            self.chain_ids.append(async_result.id)
 
 
 class SegTrainSerializer(ProcessSerializerMixin, serializers.Serializer):
@@ -1204,6 +1206,7 @@ class TranscribeSerializer(ProcessSerializerMixin, serializers.Serializer):
             job=OcrModel.MODEL_JOB_RECOGNIZE)
         self.fields['parts'].queryset = DocumentPart.objects.filter(
             document=self.document)
+        self.chain_ids = []
 
     def process(self):
         super().process()
@@ -1221,7 +1224,7 @@ class TranscribeSerializer(ProcessSerializerMixin, serializers.Serializer):
             ocr_model_document.save()
 
         for part in parts:
-            part.chain_tasks(
+            async_result = part.chain_tasks(
                 transcribe.si(
                     task_group_pk=self.task_group.pk,
                     transcription_pk=transcription.pk,
@@ -1229,6 +1232,7 @@ class TranscribeSerializer(ProcessSerializerMixin, serializers.Serializer):
                     model_pk=model.pk,
                     user_pk=self.user.pk)
             )
+            self.chain_ids.append(async_result.id)
 
 
 class EditableMultipleChoiceField(serializers.MultipleChoiceField):

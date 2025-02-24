@@ -1457,7 +1457,7 @@ class DocumentPart(ExportModelOperationsMixin("DocumentPart"), CascadeUpdate, Or
             transcription.save()
 
     def chain_tasks(self, *tasks):
-        chain(*tasks).delay()
+        return chain(*tasks).apply_async()
 
     def task(self, task_name, commit=True, **kwargs):
         if not self.tasks_finished():
@@ -1491,8 +1491,7 @@ class DocumentPart(ExportModelOperationsMixin("DocumentPart"), CascadeUpdate, Or
                                        **kwargs))
 
         if commit:
-            self.chain_tasks(*tasks)
-
+            async_result = self.chain_tasks(*tasks)
         return tasks
 
     def make_masks(self, only=None):

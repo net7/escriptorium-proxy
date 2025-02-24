@@ -1,3 +1,4 @@
+"""URLs here"""
 from django.urls import include, path
 from rest_framework_nested import routers
 
@@ -21,6 +22,7 @@ from api.views import (
     OcrModelViewSet,
     PartMetadataViewSet,
     PartViewSet,
+    ProjectandDocumentCreateView,
     ProjectTagViewSet,
     ProjectViewSet,
     RegenerableAuthToken,
@@ -74,5 +76,6 @@ urlpatterns = [
     path('', include(parts_router.urls)),
     path('', include(projects_router.urls)),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
-    path('token-auth/', RegenerableAuthToken.as_view())
+    path('token-auth/', RegenerableAuthToken.as_view()),
+    path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint. 
 ]
