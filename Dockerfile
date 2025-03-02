@@ -20,6 +20,7 @@ ENV LC_ALL=C.UTF-8
 WORKDIR /usr/src/app
 
 COPY ./app/entrypoint.sh /usr/src/app/entrypoint.sh
+RUN chmod +x /usr/src/app/entrypoint.sh
 COPY ./app/manage.py /usr/src/app/manage.py
 COPY ./app/requirements.txt /usr/src/app/requirements.txt
 COPY ./app/uwsgi.ini /usr/src/app/uwsgi.ini

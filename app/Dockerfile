@@ -36,3 +36,5 @@ RUN pip install --root-user-action ignore -q --upgrade pip
 # Install Python packages and remove cache
 COPY ./requirements.txt /usr/src/app/requirements.txt
 RUN pip --no-cache-dir install --root-user-action ignore -q -r requirements.txt
+COPY entrypoint.sh /usr/src/app/entrypoint.sh
+RUN chmod +x /usr/src/app/entrypoint.sh
