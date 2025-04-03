@@ -1499,7 +1499,7 @@ class ProjectandDocumentCreateView(APIView):
         if "transcription_name" in request.data:
             transcription_serializer = TranscriptionSerializer(
                 data={"name": request.data.get("transcription_name")},
-                context={'view': DummyView, 'request': request, 'user': request.user}
+                context={'view': DummyView, 'request': request, 'user': request.user, 'document_pk': document.pk}
             )
             if not transcription_serializer.is_valid():
                 return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)

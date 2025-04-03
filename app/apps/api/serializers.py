@@ -202,7 +202,8 @@ class TranscriptionSerializer(serializers.ModelSerializer):
         fields = ('pk', 'name', 'archived', 'avg_confidence', 'created_at', 'comments')
 
     def create(self, data):
-        document = Document.objects.get(pk=self.context["view"].kwargs["document_pk"])
+        document_id = self.context["document_pk"]
+        document = Document.objects.get(pk=document_id)
         data['document'] = document
         try:
             return super().create(data)
