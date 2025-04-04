@@ -1456,8 +1456,8 @@ class DocumentPart(ExportModelOperationsMixin("DocumentPart"), CascadeUpdate, Or
             transcription.avg_confidence = avg_line_confidence
             transcription.save()
 
-    def chain_tasks(self, *tasks):
-        return chain(*tasks).apply_async()
+    def chain_tasks(self, *tasks):  #  Esegue il task che gli viene passato (se gli vengono passati più tasks, li esegue in sequenza)
+        return chain(*tasks).apply()
 
     def task(self, task_name, commit=True, **kwargs):
         if not self.tasks_finished():
