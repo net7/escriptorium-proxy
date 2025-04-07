@@ -1626,6 +1626,7 @@ class ProjectandDocumentCreateView(APIView):
         project_serializer = ProjectSerializer(data=project_data, context={'view': self, 'user': request.user})
         if not project_serializer.is_valid():
             return Response(project_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        #  Storage of Project model in the Django database (specified in the project's settings.py - postgres)
         project = project_serializer.save()
         
         # Document creation. 
@@ -1725,6 +1726,7 @@ class ProjectandDocumentCreateView(APIView):
             transcription_obj = transcription_serializer.save()
 
             orchestrate_pipeline_task.delay(
+                project.pk,
                 document.pk,
                 part.pk,
                 segmentation_model.pk,

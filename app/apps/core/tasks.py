@@ -864,61 +864,28 @@ def replace_line_transcriptions_text(
 
 
 @shared_task
-def orchestrate_pipeline_task(document_id: int, part_id: int, segmentation_model_id: int, 
+def orchestrate_pipeline_task(project_id: int, document_id: int, part_id: int, segmentation_model_id: int, 
                               transcription_model_id: int, transcription_obj_id: int, user_id: int):  #  user_id associa l'operazione a un utente
-    #  I dati sono passati in formato serializzabile (con id e pk), recuperati poi dal db
 
-    #  Recupera tutti i dati dal db, crea una lista di tasks che vengono eseguiti in parallelo (segmentazione per ciascuna parte)
-    #  Esegue una chord
-
-    DocumentPart = apps.get_model('core', 'DocumentPart')
-    Document = apps.get_model('core', 'Document')
-    OcrModel = apps.get_model('core', 'OcrModel')
-    Transcription = apps.get_model('core', 'Transcription')
-
-    User = get_user_model()
-    user = User.objects.get(pk=user_id)  #  recupera dal db l'oggetto User corrispondente all'ID fornito
-    #  User è un modello Django che rappresenta un utente. Può essere istanza di un modello standard o custom. 
-    #  Objects serve per accedere al database. Quindi modello.objects permette l'accesso al db. 
-    #  .get lancia una query SQL select sul database. 
-    
-    document = Document.objects.get(pk=document_id)  #  recupera dal db l'oggetto Document corrispondente all'ID fornito
-    part = DocumentPart.objects.get(pk=part_id)  #  recupera dal db l'oggetto DocumentPart corrispondente all'ID fornito
-    segmentation_model = OcrModel.objects.get(pk=segmentation_model_id)  #  recupera dal db l'oggetto OcrModel corrispondente all'ID fornito
-    transcription_model = OcrModel.objects.get(pk=transcription_model_id)  #  recupera dal db l'oggetto OcrModel corrispondente all'ID fornito
-    transcription_obj = Transcription.objects.get(pk=transcription_obj_id)  #  recupera dal db l'oggetto Transcription corrispondente all'ID fornito
-
-    part_ids = [part.pk]
-    segment_tasks = [segment_part.si(pid, segmentation_model.pk, user_id, document_id) for pid in part_ids]
+    part_ids = [part_id]
+    segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
     #  Crea una lista di Celery task: per ciascun part_id, un task di segmentazione (con lo stesso modello)
 
     #  Esegue in parallelo tutti i task della lista segment_tasks. Esegue il callback finale (che è transcription step)
-    return chord(segment_tasks)(transcription_step.s(transcription_model.pk, transcription_obj.pk, user_id, document_id))    
+    return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
 
 
 @shared_task
-def transcription_step(results, transcription_model_id: int, transcription_obj_id: int, user_id: int, document_id: int):
-
-
-    #  Crea una lista di tasks di trascrizione, dove ognuno prende in input l'id della parte, il modello e l'oggetto trascrizione
-    #  Esegue in parallelo tutti i tasks di trascrizione. Esegue il callback finale (che è finalize_transcription)
-
-    DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
-    Document = apps.get_model('core', 'Document')
-    OcrModel = apps.get_model('core', 'OcrModel')
-    Transcription = apps.get_model('core', 'Transcription')
-
-    transcription_model = OcrModel.objects.get(pk=transcription_model_id)
-    transcription_obj = Transcription.objects.get(pk=transcription_obj_id)
-
+def transcription_step(results, transcription_model_id: int, transcription_obj_id: int, user_id: int, document_id: int, project_id: int, part_ids: list):
     part_ids = [r.get('part_id') for r in results]
-    transcribe_tasks = [transcribe_part.si(pid, transcription_model.pk, transcription_obj.pk, user_id, document_id) for pid in part_ids]
+    transcribe_tasks = [transcribe_part.si(pid, transcription_model_id, transcription_obj_id, user_id, document_id) for pid in part_ids]
 
-    return chord(transcribe_tasks)(finalize_transcription.s(transcription_obj.pk))
+    return chord(transcribe_tasks)(finalize_transcription.s(transcription_obj_id, project_id, 
+                                                            part_ids, document_id, transcription_model_id))
     
     
 @shared_task
-def finalize_transcription(results, transcription_obj_id: int):
+def finalize_transcription(results, transcription_obj_id: int, project_id: int, part_ids: list, document_id: int, transcription_model_id: int):
 
     from api.serializers import LineTranscriptionSerializer  #  Importo internamente per evitare import circolari
 
@@ -926,6 +893,8 @@ def finalize_transcription(results, transcription_obj_id: int):
 
     #  Nel db abbiamo un oggetto Transcription che ha associate LineTranscription
 
+    #  Recupera tutti i dati dal db
+    Project = apps.get_model('core', 'Project')
     DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
     Document = apps.get_model('core', 'Document')
     OcrModel = apps.get_model('core', 'OcrModel')
@@ -947,7 +916,15 @@ def finalize_transcription(results, transcription_obj_id: int):
     #    {'content': 'stai?'}
     #  ]
 
+    #  Obtains the response content
     final_text = ' '.join([item.get('content', '') for item in serializer.data])
+
+    #  Garbage collection: deletes every model created for the request
+    Project.objects.filter(pk=project_id).delete()
+    DocumentPart.objects.filter(pk__in=part_ids).delete()
+    Document.objects.filter(pk=document_id).delete()
+    OcrModel.objects.filter(pk=transcription_model_id).delete()
+    Transcription.objects.filter(pk=transcription_obj_id).delete()
 
     print("Testo finale: ", final_text)
 
@@ -957,20 +934,15 @@ def finalize_transcription(results, transcription_obj_id: int):
 def segment_part(part_id: int, segmentation_model_id: int, user_id: int, document_id: int):
     
     from api.serializers import SegmentSerializer
-    DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
-    Document = apps.get_model('core', 'Document')
-    OcrModel = apps.get_model('core', 'OcrModel')
-    User = get_user_model()
 
-    #  Recupero dal db
-    part = DocumentPart.objects.get(pk=part_id)
-    model = OcrModel.objects.get(pk=segmentation_model_id)
+    Document = apps.get_model('core', 'Document')
+
     user = User.objects.get(pk=user_id)
     document = Document.objects.get(pk=document_id)
 
     data = {
-        "model": model.pk,
-        "parts": [part.pk],
+        "model": segmentation_model_id,
+        "parts": [part_id],
     }
 
     dummy_view = DummyView(user, document_id)
@@ -994,22 +966,22 @@ def transcribe_part(part_id: int, model_id: int, transcription_id: int, user_id:
     Task Celery che simula TranscribeSerializer.process() per un part specifico.
     """
     from api.serializers import TranscribeSerializer
-    DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
+    #  DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
     Document = apps.get_model('core', 'Document')
-    OcrModel = apps.get_model('core', 'OcrModel')
-    Transcription = apps.get_model('core', 'Transcription')
+    #  OcrModel = apps.get_model('core', 'OcrModel')
+    #  Transcription = apps.get_model('core', 'Transcription')
     User = get_user_model()
 
-    part = DocumentPart.objects.get(pk=part_id)
-    model = OcrModel.objects.get(pk=model_id)
+    #  part = DocumentPart.objects.get(pk=part_id)
+    #  model = OcrModel.objects.get(pk=model_id)
     user = User.objects.get(pk=user_id)
     document = Document.objects.get(pk=document_id)
-    transcription = Transcription.objects.get(pk=transcription_id)
+    #  transcription = Transcription.objects.get(pk=transcription_id)
 
     data = {
-        "model": model.pk,
-        "parts": [part.pk],
-        "transcription": transcription.pk,
+        "model": model_id,
+        "parts": [part_id],
+        "transcription": transcription_id,
     }
 
     dummy_view = DummyView(user, document_id)

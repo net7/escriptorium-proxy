@@ -900,6 +900,7 @@ class SegmentSerializer(ProcessSerializerMixin, serializers.Serializer):
                 ocr_model_document.save()
 
         for part in parts:
+            #  per ciascuna part, avvia un task Celery asincrono
             async_result = part.chain_tasks(
                 segment.si(instance_pk=part.pk,
                            user_pk=self.user.pk,
