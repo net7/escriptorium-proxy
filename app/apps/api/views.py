@@ -1639,23 +1639,65 @@ class ProjectandDocumentCreateView(APIView):
 
         #  Image loading.
         part = None
-        if "image" in request.FILES:
-            #  Creates a dummy view with document.pk since the serializer requires data in this format. 
-            DummyView = type("DummyView", (APIView,), {"kwargs": {"document_pk": document.pk}})
-            part_serializer = PartSerializer(
-                data=request.data,
-                context = {'view': DummyView, 'user': request.user, 'request': request}
-            )
-            if not part_serializer.is_valid():
-                return Response(part_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            #  The creates method of the part serializer launches a Celery chain. The id of the chain is saved in the part object under convert_chain_task_id
-            part = part_serializer.save()
+        input_type = request.data.get("input_type", None)
+        if input_type == "image":
+            if "image" in request.FILES:
+                #  Creates a dummy view with document.pk since the serializer requires data in this format. 
+                DummyView = type("DummyView", (APIView,), {"kwargs": {"document_pk": document.pk}})
+                part_serializer = PartSerializer(
+                    data=request.data,
+                    context = {'view': DummyView, 'user': request.user, 'request': request}
+                )
+                if not part_serializer.is_valid():
+                    return Response(part_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                #  The creates method of the part serializer launches a Celery chain. The id of the chain is saved in the part object under convert_chain_task_id
+                part = part_serializer.save()
+                parts = [part]
+            else:
+                return Response(
+                    {"detail": "No image provided."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        #  Implement logic to take the manifest here
+        if input_type == "manifest":
+            if "iiif_uri" in request.data:
+                iiif_uri = request.data.get("iiif_uri")
+                #  Implement logic to take the manifest here
+                #   First a transcription object needs to be created
+                transcription_serializer = TranscriptionSerializer(
+                    data={"name": "Transcription from manifest"},
+                    context={'view': self, 'request': request, 'user': request.user, 'document_pk': document.pk}
+                )
+                if not transcription_serializer.is_valid():
+                    return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                transcription_obj = transcription_serializer.save()
+                #  Then the manifest is imported and the parts are created
+                import_serializer = ImportSerializer(
+                    data={"mode": "iiif", 
+                          "iiif_uri": iiif_uri,
+                          "transcription": transcription_obj.pk,
+                          },
+                    context={'view': self, 'request': request, 'user': request.user, 'document': document}
+                )
+                if not import_serializer.is_valid():
+                    return Response(import_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                import_serializer.process()
+                #  Takes all the parts associated with the document (since the iiif has several parts)
+                parts = document.parts.all()
+            else:
+                return Response(
+                    {"detail": "No iiif_uri provided."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         else:
             return Response(
-                {"detail": "No image provided."},
+                {"detail": "Input type should be one of the following: image, manifest."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-            
+        
+
+
+
         # 7. Load the OCR models.
         # a) Segmentation model.
         segmentation_model = None
@@ -1728,7 +1770,7 @@ class ProjectandDocumentCreateView(APIView):
             orchestrate_pipeline_task.delay(
                 project.pk,
                 document.pk,
-                part.pk,
+                [part.pk for part in parts],
                 segmentation_model.pk,
                 transcription_model.pk,
                 transcription_obj.pk,
@@ -1739,7 +1781,7 @@ class ProjectandDocumentCreateView(APIView):
             response_data = {
                 "project": ProjectSerializer(project, context={'view': self}).data,
                 "document": DocumentSerializer(document, context={'view': self, 'user': self.request.user}).data,
-                "part": PartSerializer(part, context={'view': self, 'request': self.request}).data if part else None,
+                "parts": [PartSerializer(part, context={'view': self, 'request': self.request}).data for part in parts],
                 "segmentation_model": OcrModelSerializer(segmentation_model, context={'view': self}).data if segmentation_model else None,
                 "transcription_model": OcrModelSerializer(transcription_model, context={'view': self}).data if transcription_model else None,
                 "transcription": TranscriptionSerializer(transcription_obj, context={'request': self.request}).data if transcription_obj else None

@@ -864,10 +864,9 @@ def replace_line_transcriptions_text(
 
 
 @shared_task
-def orchestrate_pipeline_task(project_id: int, document_id: int, part_id: int, segmentation_model_id: int, 
+def orchestrate_pipeline_task(project_id: int, document_id: int, part_ids: list, segmentation_model_id: int, 
                               transcription_model_id: int, transcription_obj_id: int, user_id: int):  #  user_id associa l'operazione a un utente
 
-    part_ids = [part_id]
     segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
     #  Crea una lista di Celery task: per ciascun part_id, un task di segmentazione (con lo stesso modello)
 
