@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from celery import shared_task, chord
+from celery import shared_task, chain, chord
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -864,15 +864,102 @@ def replace_line_transcriptions_text(
 
 
 @shared_task
-def orchestrate_pipeline_task(project_id: int, document_id: int, part_ids: list, segmentation_model_id: int, 
-                              transcription_model_id: int, transcription_obj_id: int, user_id: int):  #  user_id associa l'operazione a un utente
+def orchestrate_pipeline_task(project_id: int, document_id: int, segmentation_model_id: int, 
+                              transcription_model_id: int, transcription_obj_id: int, user_id: int, input_data: dict):  #  user_id associa l'operazione a un utente
+    
 
-    segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
+    #  segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
     #  Crea una lista di Celery task: per ciascun part_id, un task di segmentazione (con lo stesso modello)
 
     #  Esegue in parallelo tutti i task della lista segment_tasks. Esegue il callback finale (che è transcription step)
-    return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
+    #  return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
+                 #  transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
+    #  Test chain
+    return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
+                 orchestrate_segment_and_transcription.s(segmentation_model_id, user_id,
+                                                         document_id, transcription_model_id, 
+                                                         transcription_obj_id, project_id)).delay()
+    
+    #  return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
 
+@shared_task
+def simple_addition(result):
+    print("Result: ", result)
+
+
+@shared_task
+def create_parts_from_input(project_id: int, document_id: int, user_id: int, input_data: dict):
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+
+    from api.serializers import PartSerializer, ImportSerializer
+    from django.core.files.base import ContentFile
+    import base64
+
+    Document = apps.get_model('core', 'Document')
+    document = Document.objects.get(pk=document_id)
+    user = get_user_model().objects.get(pk=user_id)
+    dummy_view = DummyView(user, document_id)
+
+    parts = []
+
+    if input_data['input_type'] == 'image':
+        image_data = base64.b64decode(input_data['content'])  #  decodes the image. 
+
+        image_file = SimpleUploadedFile(name=input_data['filename'], content=image_data, content_type='image/jpeg')
+
+        part_serializer = PartSerializer(
+            data={
+                "document": document_id,
+                "image": image_file,
+            },
+            context={'view': dummy_view, 'user': user}
+        )
+
+        if part_serializer.is_valid():
+            part = part_serializer.save()
+        else:
+            raise Exception(part_serializer.errors)
+        
+    elif input_data['input_type'] == 'manifest':
+        transcription_id = input_data.get("transcription")
+        import_serializer = ImportSerializer(
+            data={
+                "mode": "iiif",
+                "iiif_uri": input_data['iiif_uri'],
+                "transcription": transcription_id,
+            },
+            context={'view': dummy_view, 'user': user, 'document': document}
+        )
+
+        if import_serializer.is_valid():
+            import_serializer.process()
+        else:
+            raise Exception(import_serializer.errors)
+        
+    else:
+        raise Exception("Invalid input type")
+
+@shared_task
+def orchestrate_segment_and_transcription(_, segmentation_model_id: int, user_id: int,
+                                          document_id: int, transcription_model_id: int, 
+                                          transcription_obj_id: int, project_id: int):
+    
+    from api.serializers import SegmentSerializer
+
+    Document = apps.get_model('core', 'Document')
+    document = Document.objects.get(pk=document_id)
+
+    parts = document.parts.all()
+
+    part_ids = [part.id for part in parts]
+
+    segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
+
+    return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
+    
+        
 
 @shared_task
 def transcription_step(results, transcription_model_id: int, transcription_obj_id: int, user_id: int, document_id: int, project_id: int, part_ids: list):
@@ -919,11 +1006,11 @@ def finalize_transcription(results, transcription_obj_id: int, project_id: int, 
     final_text = ' '.join([item.get('content', '') for item in serializer.data])
 
     #  Garbage collection: deletes every model created for the request
-    Project.objects.filter(pk=project_id).delete()
-    DocumentPart.objects.filter(pk__in=part_ids).delete()
-    Document.objects.filter(pk=document_id).delete()
-    OcrModel.objects.filter(pk=transcription_model_id).delete()
-    Transcription.objects.filter(pk=transcription_obj_id).delete()
+    #  Project.objects.filter(pk=project_id).delete()
+    #  DocumentPart.objects.filter(pk__in=part_ids).delete()
+    #   Document.objects.filter(pk=document_id).delete()
+    #   OcrModel.objects.filter(pk=transcription_model_id).delete()
+    #  Transcription.objects.filter(pk=transcription_obj_id).delete()
 
     print("Testo finale: ", final_text)
 

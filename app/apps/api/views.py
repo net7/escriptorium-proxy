@@ -117,6 +117,8 @@ from users.consumers import send_event
 from users.models import Group, User
 from versioning.models import NoChangeException
 
+import base64
+
 logger = logging.getLogger(__name__)
 
 CLIENT_TASK_NAME_MAP = {
@@ -1640,60 +1642,40 @@ class ProjectandDocumentCreateView(APIView):
         #  Image loading.
         part = None
         input_type = request.data.get("input_type", None)
+        input_data = {"input_type": input_type}  #  Here files data in serializable format will be saved to pass them to the asynchronous task
+
         if input_type == "image":
-            if "image" in request.FILES:
-                #  Creates a dummy view with document.pk since the serializer requires data in this format. 
-                DummyView = type("DummyView", (APIView,), {"kwargs": {"document_pk": document.pk}})
-                part_serializer = PartSerializer(
-                    data=request.data,
-                    context = {'view': DummyView, 'user': request.user, 'request': request}
-                )
-                if not part_serializer.is_valid():
-                    return Response(part_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-                #  The creates method of the part serializer launches a Celery chain. The id of the chain is saved in the part object under convert_chain_task_id
-                part = part_serializer.save()
-                parts = [part]
-            else:
+            image_file = request.FILES.get("image", None)
+            if not image_file:
                 return Response(
-                    {"detail": "No image provided."},
+                    {"detail": "No image file provided."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        #  Implement logic to take the manifest here
-        if input_type == "manifest":
-            if "iiif_uri" in request.data:
-                iiif_uri = request.data.get("iiif_uri")
-                #  Implement logic to take the manifest here
-                #   First a transcription object needs to be created
-                transcription_serializer = TranscriptionSerializer(
-                    data={"name": "Transcription from manifest"},
-                    context={'view': self, 'request': request, 'user': request.user, 'document_pk': document.pk}
-                )
-                if not transcription_serializer.is_valid():
-                    return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-                transcription_obj = transcription_serializer.save()
-                #  Then the manifest is imported and the parts are created
-                import_serializer = ImportSerializer(
-                    data={"mode": "iiif", 
-                          "iiif_uri": iiif_uri,
-                          "transcription": transcription_obj.pk,
-                          },
-                    context={'view': self, 'request': request, 'user': request.user, 'document': document}
-                )
-                if not import_serializer.is_valid():
-                    return Response(import_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-                import_serializer.process()
-                #  Takes all the parts associated with the document (since the iiif has several parts)
-                parts = document.parts.all()
-            else:
+            
+            input_data.update({"filename": image_file.name, 
+                               "content": base64.b64encode(image_file.read()).decode('utf-8'),  #  converte da binario a stringa (serializzabile)
+                               "content_type": image_file.content_type})
+            
+        elif input_type == "manifest":
+            iiif_uri = request.data.get("iiif_uri", None)
+            if not iiif_uri:
                 return Response(
                     {"detail": "No iiif_uri provided."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-        else:
-            return Response(
-                {"detail": "Input type should be one of the following: image, manifest."},
-                status=status.HTTP_400_BAD_REQUEST
+            input_data['iiif_uri'] = iiif_uri
+            #  Creates a transcription (since it is required by the import serializer)
+            transcription_serializer = TranscriptionSerializer(
+                data={"name": "Transcription from manifest"},
+                context={'view': self, 'request': request, 'user': request.user, 'document_pk': document.pk}
             )
+            if not transcription_serializer.is_valid():
+                return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            transcription_obj = transcription_serializer.save()
+            input_data['transcription'] = transcription_obj.pk
+
+                
+                
         
 
 
@@ -1767,21 +1749,24 @@ class ProjectandDocumentCreateView(APIView):
                 return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             transcription_obj = transcription_serializer.save()
 
+
+
             orchestrate_pipeline_task.delay(
                 project.pk,
                 document.pk,
-                [part.pk for part in parts],
                 segmentation_model.pk,
                 transcription_model.pk,
                 transcription_obj.pk,
-                request.user.pk  # Solo id del user, non l'intero request
+                request.user.pk,  # Solo id del user, non l'intero request,
+                input_data
             )
         
             # 8. Prepare the response.
             response_data = {
                 "project": ProjectSerializer(project, context={'view': self}).data,
                 "document": DocumentSerializer(document, context={'view': self, 'user': self.request.user}).data,
-                "parts": [PartSerializer(part, context={'view': self, 'request': self.request}).data for part in parts],
+                "input_data": input_data,
+                #  "parts": [PartSerializer(part, context={'view': self, 'request': self.request}).data for part in parts],
                 "segmentation_model": OcrModelSerializer(segmentation_model, context={'view': self}).data if segmentation_model else None,
                 "transcription_model": OcrModelSerializer(transcription_model, context={'view': self}).data if transcription_model else None,
                 "transcription": TranscriptionSerializer(transcription_obj, context={'request': self.request}).data if transcription_obj else None

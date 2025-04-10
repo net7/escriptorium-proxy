@@ -1099,7 +1099,7 @@ class ImportSerializer(ProcessSerializerMixin, serializers.Serializer):
         )
         imp.save()
 
-        document_import.delay(
+        document_import.apply(
             document_pk=self.document.pk,
             task_group_pk=self.task_group.pk,
             import_pk=imp.pk,
