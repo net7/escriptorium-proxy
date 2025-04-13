@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from celery import shared_task, chain, chord
+from celery import shared_task, chain, group, chord
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -865,30 +865,39 @@ def replace_line_transcriptions_text(
 
 
 @shared_task
-def orchestrate_pipeline_task(project_id: int, document_id: int, segmentation_model_id: int, 
-                              transcription_model_id: int, transcription_obj_id: int, user_id: int, input_data: dict):  #  user_id associa l'operazione a un utente
-    
-
-    #  segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
-    #  Crea una lista di Celery task: per ciascun part_id, un task di segmentazione (con lo stesso modello)
-
-    #  Esegue in parallelo tutti i task della lista segment_tasks. Esegue il callback finale (che è transcription step)
-    #  return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
-                 #  transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
-    #  Test chain
-    return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data, segmentation_model_id,
-                                           transcription_model_id, transcription_obj_id),
-                 simple_addition.s()).delay()
-    
-    #  return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
-
-@shared_task
-def simple_addition(result):
-    print("Result: ", result)
+def segmentation_callback(loading_results, segmentation_params: dict, transcription_params: dict):
+    seg_tasks = [
+        segment.si(
+            instance_pk=pid,
+            user_pk=segmentation_params['user_pk'],
+            task_group_pk=segmentation_params['task_group_pk'],
+            model_pk=segmentation_params['model_pk'],
+            steps=segmentation_params['steps'],
+            text_direction=segmentation_params['text_direction'],
+            override=segmentation_params['override']
+        )
+        for pid in segmentation_params['parts']
+    ]
+    return chord(seg_tasks)(transcription_callback.s(transcription_params))
 
 
 @shared_task
-def create_parts_from_input(project_id: int, document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
+def transcription_callback(loading_results, transcription_params: dict):
+    transcription_tasks = [
+        transcribe.si(
+            instance_pk=pid,
+            user_pk=transcription_params['user_pk'],
+            task_group_pk=transcription_params['task_group_pk'],
+            model_pk=transcription_params['model_pk'],
+            transcription_pk=transcription_params['transcription_pk']
+        )
+        for pid in transcription_params['parts']
+    ]
+    return group(transcription_tasks).apply_async()
+
+
+@shared_task
+def orchestration_general_workflow(document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
                             transcription_model_id: int, transcription_obj_id: int):
 
     from django.core.files.uploadedfile import SimpleUploadedFile
@@ -907,12 +916,11 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
     dummy_view = DummyView(user, document_id)
 
     parts = []
+    loading_chains = []
 
     if input_data['input_type'] == 'image':
         image_data = base64.b64decode(input_data['content'])  #  decodes the image. 
-
         image_file = SimpleUploadedFile(name=input_data['filename'], content=image_data, content_type='image/jpeg')
-
         part_serializer = PartSerializer(
             data={
                 "document": document_id,
@@ -920,10 +928,8 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
             },
             context={'view': dummy_view, 'user': user}
         )
-
         if not part_serializer.is_valid():
             raise Exception(part_serializer.errors)
-
         #  The serializer logic is copied here, so we have control of tasks. 
         validated_data = part_serializer.validated_data
         image = validated_data.get("image")
@@ -933,7 +939,6 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
                 document=document,
                 original_filename=image.name
             )[0]
-
             if part:
                 part.original_filename = image.name
                 part.image = image
@@ -947,19 +952,22 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
                 image_file_size=image.size
             )
         parts.append(part)
+
         get_thumbnailer(part.image).get_thumbnail(
             settings.THUMBNAIL_ALIASES['']['card'], generate=True)
         send_event("document", document_id, "part:created", {"id": part.pk})
-        #  part.task("convert", user_pk=user.pk)
-        base = convert.si(instance_pk=part.pk, user_pk=user.pk)
+
+        base_chain = chain(
+            convert.si(instance_pk=part.pk, user_pk=user.pk)
+            )
         if getattr(settings, 'THUMBNAIL_ENABLE', True):
-            base.link(chain(
+            base_chain = base_chain | chain(
                 lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
                 generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
-            ))
+            )
         else:
-            base.link(lossless_compression.si(instance_pk=part.pk, user_pk=user.pk))
-        base.apply()
+            base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk)
+        loading_chains.append(base_chain)
         
     elif input_data['input_type'] == 'manifest':
         transcription_id = input_data.get("transcription")
@@ -998,13 +1006,6 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
             started_by=user,
         )
         imp.save()
-        """
-        document_import.delay(document_pk=document_id, 
-                              task_group_pk=import_serializer.task_group.pk,
-                              import_pk=imp.pk,
-                              user_pk=user.pk,
-                              report_label=_('Import in %(document_name)s') % {'document_name': document.name})
-        """
         parser = make_parser(imp.document, imp.import_file,
                              name=imp.name, report=imp.report,
                              mets_describer=imp.with_mets, 
@@ -1052,23 +1053,23 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
                 part.image_file_size = part.image.size
                 part.save()
                 parts.append(part)
-                #  parser.post_process_image(part)
                 get_thumbnailer(part.image).get_thumbnail(
                     settings.THUMBNAIL_ALIASES['']['card'], generate=True)
                 send_event("document", document_id, "part:created", {"id": part.pk})
-                base = convert.si(instance_pk=part.pk, user_pk=user.pk)
+                base_chain = chain(
+                    convert.si(instance_pk=part.pk, user_pk=user.pk)
+                    )
                 if getattr(settings, 'THUMBNAIL_ENABLE', True):
-                    base.link(chain(
+                    base_chain = base_chain | chain(
                         lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
                         generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
-                    ))
+                    )
                 else:
-                    base.link(lossless_compression.si(instance_pk=part.pk, user_pk=user.pk))
-                base.apply()
+                    base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk)
+                loading_chains.append(base_chain)
                 time.sleep(0.1)
             except Exception as e:
                 raise Exception(e)
-            
     else:
         raise Exception("Input type not supported")
         
@@ -1082,25 +1083,27 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
         raise Exception(segment_serializer.errors)
     ProcessSerializerMixin.process(segment_serializer)
     validated_segmentation_data = segment_serializer.validated_data
-    model = validated_segmentation_data.get("model")
-    parts = validated_segmentation_data.get("parts") or segment_serializer.document.parts.all()
-    if model:
+    segmentation_model = validated_segmentation_data.get("model")
+    segmentation_parts = validated_segmentation_data.get("parts") or segment_serializer.document.parts.all()
+    if segmentation_model:
         ocr_model_document, created = OcrModelDocument.objects.get_or_create(
             document=segment_serializer.document,
-            ocr_model=model,
+            ocr_model=segmentation_model,
             defaults={'executed_on': timezone.now()}
         )
         if not created:
             ocr_model_document.executed_on = timezone.now()
             ocr_model_document.save()
-    for part in parts:
-        segment.delay(instance_pk=part.pk,
-                    user_pk=user.pk,
-                    task_group_pk=segment_serializer.task_group.pk,
-                    model_pk=model.pk if model else None,
-                    steps=segment_serializer.validated_data.get("steps"),
-                    text_direction=segment_serializer.validated_data.get("text_direction"),
-                    override=segment_serializer.validated_data.get("override"))
+
+    segmentation_params = {
+        'parts': segmentation_parts,
+        'model_pk': segmentation_model.pk if segmentation_model else None,
+        'task_group_pk': segment_serializer.task_group.pk,
+        'steps': segment_serializer.validated_data.get("steps"),
+        'text_direction': segment_serializer.validated_data.get("text_direction"),
+        'override': segment_serializer.validated_data.get("override"),
+        'user_pk': user.pk,
+    }
         
     #  Transcription logic
     transcription_data = {
@@ -1114,176 +1117,36 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
         raise Exception(transcription_serializer.errors)
     ProcessSerializerMixin.process(transcription_serializer)
     validated_transcription_data = transcription_serializer.validated_data
-    model = validated_transcription_data.get("model")
-    parts = validated_transcription_data.get("parts") or transcription_serializer.document.parts.all()
+    transcription_model = validated_transcription_data.get("model")
+    transcription_parts = validated_transcription_data.get("parts") or transcription_serializer.document.parts.all()
     transcription = validated_transcription_data.get("transcription")
 
     ocr_model_document, created = OcrModelDocument.objects.get_or_create(
         document=transcription_serializer.document,
-        ocr_model=model,
+        ocr_model=transcription_model,
         defaults={'executed_on': timezone.now()}
     )
     if not created:
         ocr_model_document.executed_on = timezone.now()
         ocr_model_document.save()
     
-    for part in parts:
-        transcribe.delay(instance_pk=part.pk,
-                         user_pk=user.pk,
-                         task_group_pk=transcription_serializer.task_group.pk,
-                         model_pk=model.pk,
-                         transcription_pk=transcription.pk)
-    
-
-        
-    
-        
-
-        
-        
-
-@shared_task
-def orchestrate_segment_and_transcription(_, segmentation_model_id: int, user_id: int,
-                                          document_id: int, transcription_model_id: int, 
-                                          transcription_obj_id: int, project_id: int):
-    
-    from api.serializers import SegmentSerializer
-
-    Document = apps.get_model('core', 'Document')
-    document = Document.objects.get(pk=document_id)
-
-    parts = document.parts.all()
-
-    part_ids = [part.id for part in parts]
-
-    segment_tasks = [segment_part.si(pid, segmentation_model_id, user_id, document_id) for pid in part_ids]
-
-    return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
-    
-        
-
-@shared_task
-def transcription_step(results, transcription_model_id: int, transcription_obj_id: int, user_id: int, document_id: int, project_id: int, part_ids: list):
-    part_ids = [r.get('part_id') for r in results]
-    transcribe_tasks = [transcribe_part.si(pid, transcription_model_id, transcription_obj_id, user_id, document_id) for pid in part_ids]
-
-    return chord(transcribe_tasks)(finalize_transcription.s(transcription_obj_id, project_id, 
-                                                            part_ids, document_id, transcription_model_id))
-    
-    
-@shared_task
-def finalize_transcription(results, transcription_obj_id: int, project_id: int, part_ids: list, document_id: int, transcription_model_id: int):
-
-    from api.serializers import LineTranscriptionSerializer  #  Importo internamente per evitare import circolari
-
-    #  Recupera tutte le righe corrispondenti a una transcrizione dal db e mette insieme i contenuti in un'unica stringa. 
-
-    #  Nel db abbiamo un oggetto Transcription che ha associate LineTranscription
-
-    #  Recupera tutti i dati dal db
-    Project = apps.get_model('core', 'Project')
-    DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
-    Document = apps.get_model('core', 'Document')
-    OcrModel = apps.get_model('core', 'OcrModel')
-    Transcription = apps.get_model('core', 'Transcription')
-    LineTranscription = apps.get_model('core', 'LineTranscription')
-
-    transcription_obj = Transcription.objects.get(pk=transcription_obj_id)
-
-    #  Filter sul db corrisponde a una query SELECT * FROM line_transcription WHERE transcription_id = transcription_obj.id;
-
-    lines = LineTranscription.objects.filter(transcription=transcription_obj)  #  questo restituisce una QuerySet
-
-    serializer = LineTranscriptionSerializer(lines, many=True)  #  questo serializza la QuerySet in dati JSON-like
-
-    #  I dati ottenuti qui saranno qualcosa come: 
-    #  [
-    #    {'content': 'ciao'},
-    #    {'content': 'come'},
-    #    {'content': 'stai?'}
-    #  ]
-
-    #  Obtains the response content
-    final_text = ' '.join([item.get('content', '') for item in serializer.data])
-
-    #  Garbage collection: deletes every model created for the request
-    #  Project.objects.filter(pk=project_id).delete()
-    #  DocumentPart.objects.filter(pk__in=part_ids).delete()
-    #   Document.objects.filter(pk=document_id).delete()
-    #   OcrModel.objects.filter(pk=transcription_model_id).delete()
-    #  Transcription.objects.filter(pk=transcription_obj_id).delete()
-
-    print("Testo finale: ", final_text)
-
-    return {"transcription_text": final_text}
-
-@shared_task
-def segment_part(part_id: int, segmentation_model_id: int, user_id: int, document_id: int):
-    
-    from api.serializers import SegmentSerializer
-
-    Document = apps.get_model('core', 'Document')
-
-    user = User.objects.get(pk=user_id)
-    document = Document.objects.get(pk=document_id)
-
-    data = {
-        "model": segmentation_model_id,
-        "parts": [part_id],
+    transcription_params = {
+        'parts': transcription_parts,
+        'model_pk': transcription_model.pk if transcription_model else None,
+        'task_group_pk': transcription_serializer.task_group.pk,
+        'transcription_pk': transcription.pk,
+        'user_pk': user.pk,
     }
 
-    dummy_view = DummyView(user, document_id)
+    loading_group = group(loading_chains)
+    chord(loading_group)(segmentation_callback.s(segmentation_params, transcription_params))
 
-    serializer = SegmentSerializer(data=data, 
-                                   context={'user': user, 
-                                            'view': dummy_view,  #  per il momento usiamo una dummyview, poi vediamo se manca qualcosa.  
-                                            'document': document})  #  recupera il documento dal db e lo passa
+        
     
-    if serializer.is_valid():
-        serializer.process()
+        
 
-        return {"part_id": part_id, "status": "segmentation_completed"}
-    else:
-        return {"part_id": part_id, "status": "failed", "errors": serializer.errors}
-    
+        
 
-@shared_task
-def transcribe_part(part_id: int, model_id: int, transcription_id: int, user_id: int, document_id: int):
-    """
-    Task Celery che simula TranscribeSerializer.process() per un part specifico.
-    """
-    from api.serializers import TranscribeSerializer
-    #  DocumentPart = apps.get_model('core', 'DocumentPart')  #  recupero i modelli per evitare import circolare
-    Document = apps.get_model('core', 'Document')
-    #  OcrModel = apps.get_model('core', 'OcrModel')
-    #  Transcription = apps.get_model('core', 'Transcription')
-    User = get_user_model()
-
-    #  part = DocumentPart.objects.get(pk=part_id)
-    #  model = OcrModel.objects.get(pk=model_id)
-    user = User.objects.get(pk=user_id)
-    document = Document.objects.get(pk=document_id)
-    #  transcription = Transcription.objects.get(pk=transcription_id)
-
-    data = {
-        "model": model_id,
-        "parts": [part_id],
-        "transcription": transcription_id,
-    }
-
-    dummy_view = DummyView(user, document_id)
-
-    serializer = TranscribeSerializer(data=data, context={
-        "user": user,
-        "view": dummy_view,
-        "document": document
-    })
-
-    if serializer.is_valid():
-        serializer.process()  # Questo esegue la trascrizione sul part
-        return {"part_id": part_id, "status": "transcription_completed"}
-    else:
-        return {"part_id": part_id, "status": "failed", "errors": serializer.errors}
 
 
 

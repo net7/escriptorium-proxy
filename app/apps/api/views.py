@@ -109,7 +109,7 @@ from core.models import (
     TextualWitness,
     Transcription,
 )
-from core.tasks import recalculate_masks, orchestrate_pipeline_task
+from core.tasks import recalculate_masks, orchestration_general_workflow
 from imports.forms import ExportForm, ImportForm
 from imports.parsers import ParseError
 from reporting.models import TaskGroup, TaskReport
@@ -1751,14 +1751,13 @@ class ProjectandDocumentCreateView(APIView):
 
 
 
-            orchestrate_pipeline_task.delay(
-                project.pk,
+            orchestration_general_workflow.delay(
                 document.pk,
+                request.user.pk,
+                input_data,
                 segmentation_model.pk,
                 transcription_model.pk,
                 transcription_obj.pk,
-                request.user.pk,  # Solo id del user, non l'intero request,
-                input_data
             )
         
             # 8. Prepare the response.
