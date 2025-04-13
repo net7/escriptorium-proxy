@@ -876,9 +876,7 @@ def orchestrate_pipeline_task(project_id: int, document_id: int, segmentation_mo
                  #  transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
     #  Test chain
     return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
-                 orchestrate_segment_and_transcription.s(segmentation_model_id, user_id,
-                                                         document_id, transcription_model_id, 
-                                                         transcription_obj_id, project_id)).delay()
+                 simple_addition.s(10)).delay()
     
     #  return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
 
@@ -891,9 +889,11 @@ def simple_addition(result):
 def create_parts_from_input(project_id: int, document_id: int, user_id: int, input_data: dict):
 
     from django.core.files.uploadedfile import SimpleUploadedFile
+    from core.models import DocumentPart
+    from imports.models import DocumentImport
+    from imports.tasks import document_import
 
-
-    from api.serializers import PartSerializer, ImportSerializer
+    from api.serializers import PartSerializer, ImportSerializer, ProcessSerializerMixin
     from django.core.files.base import ContentFile
     import base64
 
@@ -917,13 +917,50 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
             context={'view': dummy_view, 'user': user}
         )
 
-        if part_serializer.is_valid():
-            part = part_serializer.save()
-        else:
+        if not part_serializer.is_valid():
             raise Exception(part_serializer.errors)
+
+        #  The serializer logic is copied here, so we have control of tasks. 
+        validated_data = part_serializer.validated_data
+        image = validated_data.get("image")
+
+        try:
+            part = DocumentPart.objects.filter(
+                document=document,
+                original_filename=image.name
+            )[0]
+
+            if part:
+                part.original_filename = image.name
+                part.image = image
+                part.image_file_size = image.size
+                part.save()
+        except IndexError as e:
+            part = DocumentPart.objects.create(
+                document=document,
+                original_filename=image.name,
+                image=image,
+                image_file_size=image.size
+            )
+        get_thumbnailer(part.image).get_thumbnail(
+            settings.THUMBNAIL_ALIASES['']['card'], generate=True)
+        send_event("document", document_id, "part:created", {"id": part.pk})
+        #  part.task("convert", user_pk=user.pk)
+        base = convert.si(instance_pk=part.pk, user_pk=user.pk)
+        if getattr(settings, 'THUMBNAIL_ENABLE', True):
+            base.link(chain(
+                lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
+                generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
+            ))
+        else:
+            base.link(lossless_compression.si(instance_pk=part.pk, user_pk=user.pk))
+        base.apply()
         
     elif input_data['input_type'] == 'manifest':
         transcription_id = input_data.get("transcription")
+        iiif_uri = input_data['iiif_uri']
+        if not iiif_uri:
+            raise Exception("IIIF URI is required")
         import_serializer = ImportSerializer(
             data={
                 "mode": "iiif",
@@ -934,12 +971,37 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
         )
 
         if import_serializer.is_valid():
-            import_serializer.process()
+            ProcessSerializerMixin.process(import_serializer)  #  Adds self.task_group
+            import_serializer.validate_iiif_uri(iiif_uri)  #  Adds self.file and self.total
         else:
             raise Exception(import_serializer.errors)
+
+        #  The serializer logic is replicated here to gain control of tasks
+        validated_data = import_serializer.validated_data
+        if 'name' in validated_data:
+            name = validated_data['name']
+        elif 'transcription' in validated_data:
+            name = validated_data['transcription'].name
+        else:
+            name = document.name
+        imp = DocumentImport(
+            document=document, 
+            name=name,
+            override=validated_data.get('override') or False,
+            import_file=import_serializer.file,
+            total=import_serializer.total,
+            started_by=user,
+        )
+        imp.save()
+        document_import.delay(document_pk=document_id, 
+                              task_group_pk=import_serializer.task_group.pk,
+                              import_pk=imp.pk,
+                              user_pk=user.pk,
+                              report_label=_('Import in %(document_name)s') % {'document_name': document.name})
         
-    else:
-        raise Exception("Invalid input type")
+
+        
+        
 
 @shared_task
 def orchestrate_segment_and_transcription(_, segmentation_model_id: int, user_id: int,

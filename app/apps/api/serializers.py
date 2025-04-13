@@ -646,7 +646,6 @@ class PartSerializer(serializers.ModelSerializer):
         part.task(
             "convert",
             user_pk=part.document.owner and part.document.owner.pk or None)
-
         return part
 
 
@@ -1099,7 +1098,7 @@ class ImportSerializer(ProcessSerializerMixin, serializers.Serializer):
         )
         imp.save()
 
-        document_import.apply(
+        document_import.delay(
             document_pk=self.document.pk,
             task_group_pk=self.task_group.pk,
             import_pk=imp.pk,

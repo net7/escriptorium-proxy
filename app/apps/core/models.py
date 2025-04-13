@@ -1492,7 +1492,7 @@ class DocumentPart(ExportModelOperationsMixin("DocumentPart"), CascadeUpdate, Or
 
         if commit:
             async_result = self.chain_tasks(*tasks)
-        return tasks
+        return async_result
 
     def make_masks(self, only=None):
         im = Image.open(self.image).convert("L")
