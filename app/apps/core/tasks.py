@@ -36,8 +36,9 @@ from core.search import (
 # DO NOT REMOVE THIS IMPORT, it will break celery tasks located in this file
 from reporting.tasks import create_task_reporting  # noqa F401
 from users.consumers import send_event
-
-
+import uuid
+import time
+from django.utils import timezone
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -875,8 +876,9 @@ def orchestrate_pipeline_task(project_id: int, document_id: int, segmentation_mo
     #  return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
                  #  transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))
     #  Test chain
-    return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data),
-                 simple_addition.s(10)).delay()
+    return chain(create_parts_from_input.s(project_id, document_id, user_id, input_data, segmentation_model_id,
+                                           transcription_model_id, transcription_obj_id),
+                 simple_addition.s()).delay()
     
     #  return chord(segment_tasks)(transcription_step.s(transcription_model_id, transcription_obj_id, user_id, document_id, project_id, part_ids))    
 
@@ -886,14 +888,16 @@ def simple_addition(result):
 
 
 @shared_task
-def create_parts_from_input(project_id: int, document_id: int, user_id: int, input_data: dict):
+def create_parts_from_input(project_id: int, document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
+                            transcription_model_id: int, transcription_obj_id: int):
 
     from django.core.files.uploadedfile import SimpleUploadedFile
-    from core.models import DocumentPart
+    from core.models import DocumentPart, Metadata, DocumentMetadata, OcrModelDocument
     from imports.models import DocumentImport
     from imports.tasks import document_import
+    from imports.parsers import IIIFManifestParser, make_parser
 
-    from api.serializers import PartSerializer, ImportSerializer, ProcessSerializerMixin
+    from api.serializers import PartSerializer, ImportSerializer, ProcessSerializerMixin, SegmentSerializer, TranscribeSerializer
     from django.core.files.base import ContentFile
     import base64
 
@@ -942,6 +946,7 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
                 image=image,
                 image_file_size=image.size
             )
+        parts.append(part)
         get_thumbnailer(part.image).get_thumbnail(
             settings.THUMBNAIL_ALIASES['']['card'], generate=True)
         send_event("document", document_id, "part:created", {"id": part.pk})
@@ -993,11 +998,145 @@ def create_parts_from_input(project_id: int, document_id: int, user_id: int, inp
             started_by=user,
         )
         imp.save()
+        """
         document_import.delay(document_pk=document_id, 
                               task_group_pk=import_serializer.task_group.pk,
                               import_pk=imp.pk,
                               user_pk=user.pk,
                               report_label=_('Import in %(document_name)s') % {'document_name': document.name})
+        """
+        parser = make_parser(imp.document, imp.import_file,
+                             name=imp.name, report=imp.report,
+                             mets_describer=imp.with_mets, 
+                             mets_base_uri=imp.mets_base_uri)  #  Creates the IIIFManifestParser object
+        try:
+            for metadata in parser.manifest["metadata"]:
+                if metadata["value"]:
+                    name = str(metadata["label"])[:128]
+                    md, created = Metadata.objects.get_or_create(name=name)
+                    DocumentMetadata.objects.get_or_create(
+                        document=parser.document, key=md, value=str(metadata["value"])[:512]
+                    )
+        except KeyError:
+            pass
+
+        total = len(parser.canvases)
+        for i, canvas in enumerate(parser.canvases):
+            try:
+                resource = canvas["images"][0]["resource"]
+                uri_template = "{image}/{region}/{size}/{rotation}/{quality}.{format}"
+                url = uri_template.format(
+                    image=resource["service"]["@id"],
+                    region="full",
+                    size=getattr(settings, "IIIF_IMPORT_QUALITY", "full"),
+                    rotation=0,
+                    quality="default",
+                    format="jpg",
+                )
+                r = parser.get_image(url)
+                try:
+                    part = DocumentPart.objects.filter(
+                        document=document,
+                        source=url)[0]
+                except IndexError:
+                    part = DocumentPart(
+                        document=document,
+                        source=url                        
+                    )
+                if "label" in resource:
+                    part.name = resource["label"]
+                name = "%d_%s_%s" % (i, uuid.uuid4().hex[:5], url.split("/")[-1])
+                part.original_filename = name
+                part.image_file_size = 0
+                part.image.save(name, ContentFile(r.content), save=False)
+                part.image_file_size = part.image.size
+                part.save()
+                parts.append(part)
+                #  parser.post_process_image(part)
+                get_thumbnailer(part.image).get_thumbnail(
+                    settings.THUMBNAIL_ALIASES['']['card'], generate=True)
+                send_event("document", document_id, "part:created", {"id": part.pk})
+                base = convert.si(instance_pk=part.pk, user_pk=user.pk)
+                if getattr(settings, 'THUMBNAIL_ENABLE', True):
+                    base.link(chain(
+                        lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
+                        generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
+                    ))
+                else:
+                    base.link(lossless_compression.si(instance_pk=part.pk, user_pk=user.pk))
+                base.apply()
+                time.sleep(0.1)
+            except Exception as e:
+                raise Exception(e)
+            
+    else:
+        raise Exception("Input type not supported")
+        
+    #  The logic of the segmentation is moved here to have control over tasks. 
+    segmentation_data = {
+        "model": segmentation_model_id,
+        "parts": [part.pk for part in parts],
+    }
+    segment_serializer = SegmentSerializer(data=segmentation_data, context={'user': user, 'view': dummy_view, 'document': document})
+    if not segment_serializer.is_valid():
+        raise Exception(segment_serializer.errors)
+    ProcessSerializerMixin.process(segment_serializer)
+    validated_segmentation_data = segment_serializer.validated_data
+    model = validated_segmentation_data.get("model")
+    parts = validated_segmentation_data.get("parts") or segment_serializer.document.parts.all()
+    if model:
+        ocr_model_document, created = OcrModelDocument.objects.get_or_create(
+            document=segment_serializer.document,
+            ocr_model=model,
+            defaults={'executed_on': timezone.now()}
+        )
+        if not created:
+            ocr_model_document.executed_on = timezone.now()
+            ocr_model_document.save()
+    for part in parts:
+        segment.delay(instance_pk=part.pk,
+                    user_pk=user.pk,
+                    task_group_pk=segment_serializer.task_group.pk,
+                    model_pk=model.pk if model else None,
+                    steps=segment_serializer.validated_data.get("steps"),
+                    text_direction=segment_serializer.validated_data.get("text_direction"),
+                    override=segment_serializer.validated_data.get("override"))
+        
+    #  Transcription logic
+    transcription_data = {
+        "model": transcription_model_id,
+        "parts": [part.pk for part in parts],
+        "transcription": transcription_obj_id,
+    }
+    transcription_serializer = TranscribeSerializer(data=transcription_data, 
+                                                    context={'user': user, 'view': dummy_view, 'document': document})
+    if not transcription_serializer.is_valid():
+        raise Exception(transcription_serializer.errors)
+    ProcessSerializerMixin.process(transcription_serializer)
+    validated_transcription_data = transcription_serializer.validated_data
+    model = validated_transcription_data.get("model")
+    parts = validated_transcription_data.get("parts") or transcription_serializer.document.parts.all()
+    transcription = validated_transcription_data.get("transcription")
+
+    ocr_model_document, created = OcrModelDocument.objects.get_or_create(
+        document=transcription_serializer.document,
+        ocr_model=model,
+        defaults={'executed_on': timezone.now()}
+    )
+    if not created:
+        ocr_model_document.executed_on = timezone.now()
+        ocr_model_document.save()
+    
+    for part in parts:
+        transcribe.delay(instance_pk=part.pk,
+                         user_pk=user.pk,
+                         task_group_pk=transcription_serializer.task_group.pk,
+                         model_pk=model.pk,
+                         transcription_pk=transcription.pk)
+    
+
+        
+    
         
 
         
