@@ -39,6 +39,10 @@ from users.consumers import send_event
 import uuid
 import time
 from django.utils import timezone
+
+import xml.etree.ElementTree as ET
+
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -895,8 +899,67 @@ def transcription_callback(loading_results, transcription_params: dict):
         )
         for pid in transcription_params['parts']
     ]
-    return chain(*transcription_tasks).apply_async()
+    return chain(*transcription_tasks, post_processing.s(transcription_params['transcription_pk'])).apply_async()
 
+
+@shared_task
+def post_processing(loading_results, transcription_pk:int):
+    from core.models import LineTranscription, Transcription
+
+    TEI = ET.Element("TEI", xmlns="http://www.tei-c.org/ns/1.0")  #  Viene creato un elemento XML (crea l'elemento radice <TEI> del documento)
+    teiHeader = ET.SubElement(TEI, "teiHeader")  #  Aggiunge figlio chiamato <teiHeader>
+    text = ET.SubElement(TEI, "text")  #  Aggiunge figlio chiamato <text>
+    body = ET.SubElement(text, "body")  #  Aggiunge figlio chiamato <body>
+
+    line_transcriptions = LineTranscription.objects.select_related(
+        "line__document_part",
+        "line__block"
+    ).filter(transcription_id=transcription_pk).order_by(
+        "line__document_part__order", "line__order"
+    )   #  recupera tutte le righe trascritte di una specifica Transcription, e le ordine nell'ordine di lettura visivo
+    #  Assume che gli ids delle document part seguano l'ordine di pagina
+    current_part = None
+    current_block = None
+    pb = None
+    block_zone = None
+
+    for lt in line_transcriptions:
+        part = lt.line.document_part
+        block = lt.line.block
+
+        if part != current_part:  #  Se abbiamo una nuova document part, la aggiunge. Il numero di pagina viene generato automaticamente, assumendo che le document part seguano l'ordine delle pagine
+            pb = ET.SubElement(body, "pb", {
+                "n": str(part.order + 1),  # numero di pagina umano (1-based)
+                "xml:id": f"p{part.pk}"
+            })
+            current_part = part
+            current_block = None  # reset blocco
+
+        if block and block != current_block:
+            coords = block.coordinates_box if block.box else [0, 0, 0, 0]
+            block_zone = ET.SubElement(body, "zone", {
+                "xml:id": f"b{block.pk}",
+                "ulx": str(coords[0]),
+                "uly": str(coords[1]),
+                "lrx": str(coords[2]),
+                "lry": str(coords[3]),
+            })  #  Viene aggiunto un elemento blocco con le coordinate
+            current_block = block
+
+        line_coords = lt.line.box or [0, 0, 0, 0]  #  si aggiunge poi un elemento Linea
+        line_el = ET.SubElement(
+            block_zone or body, "line", {
+                "xml:id": f"l{lt.line.pk}",
+                "ulx": str(line_coords[0]),
+                "uly": str(line_coords[1]),
+                "lrx": str(line_coords[2]),
+                "lry": str(line_coords[3]),
+            }
+        )
+        line_el.text = lt.content or ""  #  Viene aggiunto il testo della linea
+    tree = ET.ElementTree(TEI)
+    return ET.tostring(TEI, encoding="utf-8", method="xml")
+    
 
 @shared_task
 def orchestration_general_workflow(document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
@@ -919,6 +982,7 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
 
     parts = []
     loading_chains = []
+    mapping_part_to_page_number = {}
 
     if input_data['input_type'] == 'image':
         image_data = base64.b64decode(input_data['content'])  #  decodes the image. 
@@ -1054,7 +1118,7 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
                 part.image.save(name, ContentFile(r.content), save=False)
                 part.image_file_size = part.image.size
                 part.save()
-                parts.append(part)
+                #  parts.append(part)
                 get_thumbnailer(part.image).get_thumbnail(
                     settings.THUMBNAIL_ALIASES['']['card'], generate=True)
                 send_event("document", document_id, "part:created", {"id": part.pk})
@@ -1068,7 +1132,9 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
                     )
                 else:
                     base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk)
-                loading_chains.append(base_chain)
+                if i < 3:
+                    parts.append(part)
+                    loading_chains.append(base_chain)
                 time.sleep(0.1)
             except Exception as e:
                 raise Exception(e)
@@ -1139,7 +1205,7 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
         'model_pk': transcription_model.pk if transcription_model else None,
         'task_group_pk': transcription_serializer.task_group.pk,
         'transcription_pk': transcription.pk,
-        'user_pk': user.pk,
+        'user_pk': user.pk,        
     }
 
     loading_group = group(loading_chains)
