@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from celery import shared_task, chain, group, chord
+from celery import shared_task, chain, group, chord, Task
 from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -43,6 +43,23 @@ from django.utils import timezone
 import xml.etree.ElementTree as ET
 
 
+class TaskWithFailure(Task):
+    def on_failure(self, exc, task_id, args, kwargs, einfo):
+        from core.models import Project, OcrModel
+        logger.error(f'Task {self.name} failed with exception {exc}')
+        project_slug = kwargs.get('project_slug')
+        if project_slug:
+            project = Project.objects.get(slug=project_slug)
+            project.delete()
+        segmentation_model_id = kwargs.get('segmentation_model_id')
+        if segmentation_model_id:
+            segmentation_model = OcrModel.objects.get(pk=segmentation_model_id)
+            segmentation_model.delete()
+        transcription_model_id = kwargs.get('transcription_model_id')
+        if transcription_model_id:
+            transcription_model = OcrModel.objects.get(pk=transcription_model_id)
+            transcription_model.delete()
+
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
@@ -62,8 +79,9 @@ class DummyView:
         self.kwargs = {"document_pk": document_pk}
 
 
-@shared_task(autoretry_for=(MemoryError,), default_retry_delay=60)
-def generate_part_thumbnails(instance_pk=None, user_pk=None, **kwargs):
+@shared_task(autoretry_for=(MemoryError,), default_retry_delay=60, base=TaskWithFailure)
+def generate_part_thumbnails(instance_pk=None, user_pk=None, project_slug=None, 
+                             segmentation_model_id=None, transcription_model_id=None, **kwargs):
     if not getattr(settings, 'THUMBNAIL_ENABLE', True):
         return
 
@@ -81,8 +99,8 @@ def generate_part_thumbnails(instance_pk=None, user_pk=None, **kwargs):
     return aliases
 
 
-@shared_task(autoretry_for=(MemoryError,), default_retry_delay=3 * 60)
-def convert(instance_pk=None, user_pk=None, **kwargs):
+@shared_task(autoretry_for=(MemoryError,), default_retry_delay=3 * 60, base=TaskWithFailure)
+def convert(instance_pk=None, user_pk=None, project_slug=None, segmentation_model_id=None, transcription_model_id=None, **kwargs):
     if user_pk:
         try:
             user = User.objects.get(pk=user_pk)
@@ -101,8 +119,9 @@ def convert(instance_pk=None, user_pk=None, **kwargs):
     part.convert()
 
 
-@shared_task(autoretry_for=(MemoryError,), default_retry_delay=5 * 60)
-def lossless_compression(instance_pk=None, user_pk=None, **kwargs):
+@shared_task(autoretry_for=(MemoryError,), default_retry_delay=5 * 60, base=TaskWithFailure)
+def lossless_compression(instance_pk=None, user_pk=None, project_slug=None, 
+                         segmentation_model_id=None, transcription_model_id=None, **kwargs):
     if user_pk:
         try:
             user = User.objects.get(pk=user_pk)
@@ -369,10 +388,10 @@ def segtrain(model_pk=None, part_pks=[], document_pk=None, task_group_pk=None, u
         })
 
 
-@shared_task(autoretry_for=(MemoryError,), default_retry_delay=5 * 60)
+@shared_task(autoretry_for=(MemoryError,), default_retry_delay=5 * 60, base=TaskWithFailure)
 def segment(instance_pk=None, user_pk=None, model_pk=None,
             steps=None, text_direction=None, override=None,
-            task_group_pk=None, **kwargs):
+            task_group_pk=None, project_slug=None, page_number=None, segmentation_model_id=None, transcription_model_id=None, **kwargs):
     """
     steps can be either 'regions', 'lines' or 'both'
     """
@@ -674,10 +693,10 @@ def forced_align(instance_pk=None, model_pk=None, transcription_pk=None,
             lt.save()
 
 
-@shared_task(autoretry_for=(MemoryError,), default_retry_delay=10 * 60)
+@shared_task(autoretry_for=(MemoryError,), default_retry_delay=10 * 60, base=TaskWithFailure)
 def transcribe(instance_pk=None, model_pk=None, user_pk=None,
                transcription_pk=None, text_direction=None, task_group_pk=None,
-               **kwargs):
+               segmentation_model_id=None, transcription_model_id=None, **kwargs):
 
     try:
         DocumentPart = apps.get_model('core', 'DocumentPart')
@@ -868,8 +887,9 @@ def replace_line_transcriptions_text(
         user.notify(_('Replacements applied!'), links=[{'text': 'Report', 'src': report.uri}], id='find-replace-success', level='success')
 
 
-@shared_task
-def segmentation_callback(loading_results, segmentation_params: dict, transcription_params: dict):
+@shared_task(base=TaskWithFailure)
+def segmentation_callback(loading_results, segmentation_params: dict, transcription_params: dict,
+                          segmentation_model_id: int, transcription_model_id: int):
     #  Soluzione provvisoria per non caricare la memoria (anche se non ottimale: eseguire un unico task alla volta - prima tutti quelli di segmentazione e poi di trascrizione)
     seg_tasks = [
         segment.si(
@@ -879,32 +899,40 @@ def segmentation_callback(loading_results, segmentation_params: dict, transcript
             model_pk=segmentation_params['model_pk'],
             steps=segmentation_params['steps'],
             text_direction=segmentation_params['text_direction'],
-            override=segmentation_params['override']
+            override=segmentation_params['override'],
+            project_slug=segmentation_params['project_slug'],
+            page_number=i,
+            segmentation_model_id=segmentation_model_id,
+            transcription_model_id=transcription_model_id
         )
-        for pid in segmentation_params['parts']
+        for i, pid in enumerate(segmentation_params['parts'])
     ]
 
-    return chain(*seg_tasks, transcription_callback.s(transcription_params)).apply_async()
+    return chain(*seg_tasks, transcription_callback.s(transcription_params, segmentation_model_id, transcription_model_id)).apply_async()
 
 
-@shared_task
-def transcription_callback(loading_results, transcription_params: dict):
+@shared_task(base=TaskWithFailure)
+def transcription_callback(loading_results, transcription_params: dict, segmentation_model_id: int, transcription_model_id: int):
     transcription_tasks = [
         transcribe.si(
             instance_pk=pid,
             user_pk=transcription_params['user_pk'],
             task_group_pk=transcription_params['task_group_pk'],
             model_pk=transcription_params['model_pk'],
-            transcription_pk=transcription_params['transcription_pk']
+            transcription_pk=transcription_params['transcription_pk'],
+            project_slug=transcription_params['project_slug'],
+            segmentation_model_id=segmentation_model_id,
+            transcription_model_id=transcription_model_id
         )
         for pid in transcription_params['parts']
     ]
-    return chain(*transcription_tasks, post_processing.s(transcription_params['transcription_pk'])).apply_async()
+    return chain(*transcription_tasks, post_processing.s(transcription_params['transcription_pk'], transcription_params['project_slug'],
+                                                         segmentation_model_id, transcription_model_id)).apply_async()
 
 
-@shared_task
-def post_processing(loading_results, transcription_pk:int):
-    from core.models import LineTranscription, Transcription
+@shared_task(base=TaskWithFailure)
+def post_processing(loading_results, transcription_pk:int, project_slug:str, segmentation_model_id: int, transcription_model_id: int):
+    from core.models import LineTranscription, Transcription, Project, OcrModel
 
     TEI = ET.Element("TEI", xmlns="http://www.tei-c.org/ns/1.0")  #  Viene creato un elemento XML (crea l'elemento radice <TEI> del documento)
     teiHeader = ET.SubElement(TEI, "teiHeader")  #  Aggiunge figlio chiamato <teiHeader>
@@ -958,12 +986,18 @@ def post_processing(loading_results, transcription_pk:int):
         )
         line_el.text = lt.content or ""  #  Viene aggiunto il testo della linea
     tree = ET.ElementTree(TEI)
+    project = Project.objects.get(slug=project_slug)
+    project.delete()
+    segmentation_model = OcrModel.objects.get(pk=segmentation_model_id)
+    transcription_model = OcrModel.objects.get(pk=transcription_model_id)
+    segmentation_model.delete()
+    transcription_model.delete()
     return ET.tostring(TEI, encoding="utf-8", method="xml")
     
 
-@shared_task
+@shared_task(base=TaskWithFailure)
 def orchestration_general_workflow(document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
-                            transcription_model_id: int, transcription_obj_id: int):
+                            transcription_model_id: int, transcription_obj_id: int, project_slug: str):
 
     from django.core.files.uploadedfile import SimpleUploadedFile
     from core.models import DocumentPart, Metadata, DocumentMetadata, OcrModelDocument
@@ -1024,15 +1058,15 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
         send_event("document", document_id, "part:created", {"id": part.pk})
 
         base_chain = chain(
-            convert.si(instance_pk=part.pk, user_pk=user.pk)
+            convert.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug, segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id)
             )
         if getattr(settings, 'THUMBNAIL_ENABLE', True):
             base_chain = base_chain | chain(
-                lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
-                generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
+                lossless_compression.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug, segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id),
+                generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug, segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id),
             )
         else:
-            base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk)
+            base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug)
         loading_chains.append(base_chain)
         
     elif input_data['input_type'] == 'manifest':
@@ -1123,15 +1157,18 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
                     settings.THUMBNAIL_ALIASES['']['card'], generate=True)
                 send_event("document", document_id, "part:created", {"id": part.pk})
                 base_chain = chain(
-                    convert.si(instance_pk=part.pk, user_pk=user.pk)
+                    convert.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug)
                     )
                 if getattr(settings, 'THUMBNAIL_ENABLE', True):
                     base_chain = base_chain | chain(
-                        lossless_compression.si(instance_pk=part.pk, user_pk=user.pk),
-                        generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk),
+                        lossless_compression.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug,
+                                                segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id),
+                        generate_part_thumbnails.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug,
+                                                segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id),
                     )
                 else:
-                    base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk)
+                    base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug,
+                                                                      segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id)
                 if i < 3:
                     parts.append(part)
                     loading_chains.append(base_chain)
@@ -1172,6 +1209,7 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
         'text_direction': segment_serializer.validated_data.get("text_direction"),
         'override': segment_serializer.validated_data.get("override"),
         'user_pk': user.pk,
+        'project_slug': project_slug,
     }
         
     #  Transcription logic
@@ -1206,10 +1244,11 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
         'task_group_pk': transcription_serializer.task_group.pk,
         'transcription_pk': transcription.pk,
         'user_pk': user.pk,        
+        'project_slug': project_slug,
     }
 
     loading_group = group(loading_chains)
-    chord(loading_group)(segmentation_callback.s(segmentation_params, transcription_params))
+    chord(loading_group)(segmentation_callback.s(segmentation_params, transcription_params, segmentation_model_id, transcription_model_id))
 
         
     
