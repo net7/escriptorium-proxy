@@ -866,6 +866,7 @@ def replace_line_transcriptions_text(
 
 @shared_task
 def segmentation_callback(loading_results, segmentation_params: dict, transcription_params: dict):
+    #  Soluzione provvisoria per non caricare la memoria (anche se non ottimale: eseguire un unico task alla volta - prima tutti quelli di segmentazione e poi di trascrizione)
     seg_tasks = [
         segment.si(
             instance_pk=pid,
@@ -878,7 +879,8 @@ def segmentation_callback(loading_results, segmentation_params: dict, transcript
         )
         for pid in segmentation_params['parts']
     ]
-    return chord(seg_tasks)(transcription_callback.s(transcription_params))
+
+    return chain(*seg_tasks, transcription_callback.s(transcription_params)).apply_async()
 
 
 @shared_task
@@ -893,7 +895,7 @@ def transcription_callback(loading_results, transcription_params: dict):
         )
         for pid in transcription_params['parts']
     ]
-    return group(transcription_tasks).apply_async()
+    return chain(*transcription_tasks).apply_async()
 
 
 @shared_task
@@ -1084,7 +1086,8 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
     ProcessSerializerMixin.process(segment_serializer)
     validated_segmentation_data = segment_serializer.validated_data
     segmentation_model = validated_segmentation_data.get("model")
-    segmentation_parts = validated_segmentation_data.get("parts") or segment_serializer.document.parts.all()
+    #  segmentation_parts = validated_segmentation_data.get("parts") or list(segment_serializer.document.parts.values_list('pk', flat=True))
+    segmentation_parts = segmentation_data.get("parts")
     if segmentation_model:
         ocr_model_document, created = OcrModelDocument.objects.get_or_create(
             document=segment_serializer.document,
@@ -1118,7 +1121,8 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
     ProcessSerializerMixin.process(transcription_serializer)
     validated_transcription_data = transcription_serializer.validated_data
     transcription_model = validated_transcription_data.get("model")
-    transcription_parts = validated_transcription_data.get("parts") or transcription_serializer.document.parts.all()
+    #  transcription_parts = validated_transcription_data.get("parts") or transcription_serializer.document.parts.all()
+    transcription_parts = transcription_data.get("parts")
     transcription = validated_transcription_data.get("transcription")
 
     ocr_model_document, created = OcrModelDocument.objects.get_or_create(
