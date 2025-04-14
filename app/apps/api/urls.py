@@ -8,6 +8,7 @@ from api.views import (
     AnnotationTypeViewSet,
     BlockTypeViewSet,
     BlockViewSet,
+    CheckTranscriptionStatusView,
     DocumentMetadataViewSet,
     DocumentPartTypeViewSet,
     DocumentTagViewSet,
@@ -78,4 +79,5 @@ urlpatterns = [
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path('token-auth/', RegenerableAuthToken.as_view()),
     path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint. 
+    path('check-transcription-status/', CheckTranscriptionStatusView.as_view()),
 ]

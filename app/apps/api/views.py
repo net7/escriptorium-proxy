@@ -84,6 +84,7 @@ from api.serializers import (
 )
 from core.merger import MAX_MERGE_SIZE, merge_lines
 from core.models import (
+    AsyncJobStatus,
     AlreadyProcessingException,
     AnnotationComponent,
     AnnotationTaxonomy,
@@ -1745,27 +1746,35 @@ class ProjectandDocumentCreateView(APIView):
                     return Response(transcription_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
                 transcription_obj = transcription_serializer.save()
 
+                #  Crea un record per tracciare lo stato del task
+                job_id = uuid.uuid4()
 
+                while AsyncJobStatus.objects.filter(id=job_id).exists():
+                    job_id = uuid.uuid4()
 
-                orchestration_general_workflow.delay(
+                job_status = AsyncJobStatus.objects.create(id=job_id)
+
+                orchestrator_result = orchestration_general_workflow.delay(
                     document.pk,
                     request.user.pk,
                     input_data,
                     segmentation_model.pk,
                     transcription_model.pk,
                     transcription_obj.pk,
-                    project_slug
+                    project_slug,
+                    job_id
                 )
             
                 # 8. Prepare the response.
                 response_data = {
                     "project": ProjectSerializer(project, context={'view': self}).data,
                     "document": DocumentSerializer(document, context={'view': self, 'user': self.request.user}).data,
-                    "input_data": input_data,
+                    #  "input_data": input_data,
                     #  "parts": [PartSerializer(part, context={'view': self, 'request': self.request}).data for part in parts],
                     "segmentation_model": OcrModelSerializer(segmentation_model, context={'view': self}).data if segmentation_model else None,
                     "transcription_model": OcrModelSerializer(transcription_model, context={'view': self}).data if transcription_model else None,
-                    "transcription": TranscriptionSerializer(transcription_obj, context={'request': self.request}).data if transcription_obj else None
+                    "transcription": TranscriptionSerializer(transcription_obj, context={'request': self.request}).data if transcription_obj else None,
+                    "job_id": str(job_id)
                 }
                 return Response(response_data, status=status.HTTP_201_CREATED)
             else:
@@ -1802,3 +1811,23 @@ def wait_for_tasks(chain_ids, poll_interval=0.5, max_wait=60):
         elapsed += poll_interval
     success = all(res.successful() for res in async_results)
     return elapsed, success
+
+
+class CheckTranscriptionStatusView(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            job = AsyncJobStatus.objects.get(id=request.query_params.get('job_id'))
+        except AsyncJobStatus.DoesNotExist:
+            return Response(
+                {"detail": "Job not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(
+            {
+                "job_id": job.id,
+                "status": job.status,
+                "result": job.result
+            },
+            status=status.HTTP_200_OK
+        )
+            

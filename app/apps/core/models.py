@@ -2168,3 +2168,20 @@ class TextualWitness(models.Model):
 def delete_thumbnails(sender, instance, using, **kwargs):
     thumbnailer = get_thumbnailer(instance.image)
     thumbnailer.delete()
+
+
+#  Modello per tracciare i task per polling
+class AsyncJobStatus(models.Model):
+    STATUS_CHOICES = [
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    result = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    
