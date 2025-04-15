@@ -1183,9 +1183,8 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
                 else:
                     base_chain = base_chain | lossless_compression.si(instance_pk=part.pk, user_pk=user.pk, project_slug=project_slug,
                                                                       segmentation_model_id=segmentation_model_id, transcription_model_id=transcription_model_id, job_id=job_id)
-                if i < 3:
-                    parts.append(part)
-                    loading_chains.append(base_chain)
+                parts.append(part)
+                loading_chains.append(base_chain)
                 time.sleep(0.1)
             except Exception as e:
                 raise Exception(e)
