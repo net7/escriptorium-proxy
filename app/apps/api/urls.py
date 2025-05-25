@@ -14,6 +14,8 @@ from api.views import (
     DocumentTagViewSet,
     DocumentTranscriptionViewSet,
     DocumentViewSet,
+    ExportTranscriptionView,
+    DownloadExportView,
     GroupViewSet,
     ImageAnnotationViewSet,
     ImportViewSet,
@@ -80,4 +82,6 @@ urlpatterns = [
     path('token-auth/', RegenerableAuthToken.as_view()),
     path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint. 
     path('check-transcription-status/', CheckTranscriptionStatusView.as_view()),
+    path('export-transcription/', ExportTranscriptionView.as_view()),
+    path('download-export/', DownloadExportView.as_view()),
 ]

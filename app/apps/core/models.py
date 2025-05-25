@@ -2180,7 +2180,7 @@ class AsyncJobStatus(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, unique=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
-    result = models.TextField(null=True, blank=True)
+    result = models.JSONField(null=True, blank=True, default=dict)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

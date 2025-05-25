@@ -8,7 +8,7 @@ from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.db import connection, transaction
 from django.db.models import Count, F, Prefetch, Q
-from django.http import HttpResponseRedirect
+from django.http import HttpResponseRedirect, FileResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 from django.utils.decorators import method_decorator
@@ -117,6 +117,10 @@ from reporting.models import TaskGroup, TaskReport
 from users.consumers import send_event
 from users.models import Group, User
 from versioning.models import NoChangeException
+
+from imports.export import ENABLED_EXPORTERS
+import tempfile
+import os
 
 import base64
 
@@ -1731,7 +1735,22 @@ class ProjectandDocumentCreateView(APIView):
                     {"detail": "No transcription model provided."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-
+            
+            #  Check if output format has been specified and if it is one of the available formats.
+            #  (Available formats are text, pagexml, alto)
+            format_ = request.data.get("format")
+            if not format_:
+                return Response(
+                    {"detail": "No format provided."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            exporter_data = ENABLED_EXPORTERS.get(format_)
+            if not exporter_data:
+                return Response(
+                    {"detail": "Unsupported format."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
 
             # 9. Create the transcription object.
             # Here we assume the transcription creation requires a parameter "transcription_name"
@@ -1752,7 +1771,12 @@ class ProjectandDocumentCreateView(APIView):
                 while AsyncJobStatus.objects.filter(id=job_id).exists():
                     job_id = uuid.uuid4()
 
-                job_status = AsyncJobStatus.objects.create(id=job_id)
+                job_status = AsyncJobStatus.objects.create(id=job_id, status="pending", 
+                                                           result={
+                                                               "download_url": None,
+                                                               "filename": None,
+                                                               "content_type": None
+                                                           })
 
                 orchestrator_result = orchestration_general_workflow.delay(
                     document.pk,
@@ -1762,7 +1786,8 @@ class ProjectandDocumentCreateView(APIView):
                     transcription_model.pk,
                     transcription_obj.pk,
                     project_slug,
-                    job_id
+                    job_id,
+                    format_
                 )
             
                 # 8. Prepare the response.
@@ -1826,8 +1851,99 @@ class CheckTranscriptionStatusView(APIView):
             {
                 "job_id": job.id,
                 "status": job.status,
-                "result": job.result
+                "result": {
+                    "download_url": job.result.get("download_url"),
+                    "filename": job.result.get("filename"),
+                    "content_type": job.result.get("content_type")                }
             },
             status=status.HTTP_200_OK
         )
-            
+
+class ExportTranscriptionView(APIView):
+    def post(self, request):
+        format_ = request.data.get("format")
+        part_pks = request.data.getlist("part_pk")
+        document_name = request.data.get("document_name")
+        transcription_name = request.data.get("transcription_name")
+
+        if not all([format_, part_pks, document_name, transcription_name]):
+            return HttpResponseBadRequest(f"Missing required parameters. Format: {format_}, part_pks: {part_pks}, document_name: {document_name}, transcription_name: {transcription_name}")
+
+        exporter_data = ENABLED_EXPORTERS.get(format_)
+        if not exporter_data:
+            return HttpResponseBadRequest("Unsupported export format.")
+
+        try:
+            part_pks = [int(pk) for pk in part_pks]
+        except ValueError:
+            return HttpResponseBadRequest("Invalid part_pk values.")
+
+        document = get_object_or_404(Document, name=document_name)
+        transcription = get_object_or_404(Transcription, name=transcription_name, document=document)
+
+        report = []
+        ExporterClass = exporter_data["class"]
+
+
+        region_types = list(
+            document.valid_block_types.all().values_list("pk", flat=True)
+        )
+
+
+        exporter = ExporterClass(
+            part_pks=part_pks,
+            region_types=region_types,
+            include_images=False,
+            include_characters=False,
+            user=request.user,
+            document=document,
+            report=report,
+            transcription=transcription,
+        )
+
+        exporter.render()
+        filepath = exporter.filepath
+        if not os.path.exists(filepath):
+            return JsonResponse({"error": "Export failed."}, status=500)
+        
+        filename = os.path.basename(filepath)
+        file_extension = getattr(exporter, "file_extension", "txt")
+        content_type = "application/zip" if file_extension == "zip" else "text/plain"
+
+        response = FileResponse(open(filepath, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
+
+        def cleanup(file_path):
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                pass
+
+        response['X-Delete-File-After-Download'] = 'true'  # opzionale: solo segnale per debug
+        return response
+
+class DownloadExportView(APIView):
+    def post(self, request):
+        job_id = request.data.get("job_id")
+        job = get_object_or_404(AsyncJobStatus, id=job_id)
+
+        if job.status != "completed" or not job.result:
+            return Response(
+                {"detail": "Job not completed or result not available."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        file_path = job.result.get("file_path")
+        filename = job.result.get("filename")
+        content_type = job.result.get("content_type", "application/octet-stream")
+
+
+
+        if not file_path or not filename or not content_type:
+            return Response(
+                {"detail": "Invalid result data."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
+        
+        

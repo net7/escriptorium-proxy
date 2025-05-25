@@ -14,6 +14,7 @@ from django.apps import apps
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import F, Q
+from django.http import FileResponse
 from django.utils.html import strip_tags
 from django.utils.text import slugify
 from django.utils.translation import gettext as _
@@ -937,13 +938,19 @@ def transcription_callback(loading_results, transcription_params: dict, segmenta
         for pid in transcription_params['parts']
     ]
     return chain(*transcription_tasks, post_processing.s(transcription_params['transcription_pk'], transcription_params['project_slug'],
-                                                         segmentation_model_id, transcription_model_id, job_id)).apply_async()
+                                                         segmentation_model_id, transcription_model_id, job_id,
+                                                         transcription_params['format_'], transcription_params['parts'],
+                                                         transcription_params['document_pk'], transcription_params['user_pk'])).apply_async()
 
 
 @shared_task(base=TaskWithFailure)
-def post_processing(loading_results, transcription_pk:int, project_slug:str, segmentation_model_id: int, transcription_model_id: int, job_id: str):
-    from core.models import LineTranscription, Transcription, Project, OcrModel, AsyncJobStatus
-
+def post_processing(loading_results, transcription_pk:int, project_slug:str, segmentation_model_id: int, 
+                    transcription_model_id: int, job_id: str, format_: str, parts: list, document_pk: int, user_pk: int):
+    from core.models import LineTranscription, Transcription, Project, OcrModel, AsyncJobStatus, Document
+    from imports.export import ENABLED_EXPORTERS
+    import base64
+    """
+    #  Old logic for manually created xml-tei
     TEI = ET.Element("TEI", xmlns="http://www.tei-c.org/ns/1.0")  #  Viene creato un elemento XML (crea l'elemento radice <TEI> del documento)
     teiHeader = ET.SubElement(TEI, "teiHeader")  #  Aggiunge figlio chiamato <teiHeader>
     text = ET.SubElement(TEI, "text")  #  Aggiunge figlio chiamato <text>
@@ -997,7 +1004,7 @@ def post_processing(loading_results, transcription_pk:int, project_slug:str, seg
         line_el.text = lt.content or ""  #  Viene aggiunto il testo della linea
     tree = ET.ElementTree(TEI)
     project = Project.objects.get(slug=project_slug)
-    project.delete()
+    #  project.delete()
     segmentation_model = OcrModel.objects.get(pk=segmentation_model_id)
     transcription_model = OcrModel.objects.get(pk=transcription_model_id)
     segmentation_model.delete()
@@ -1007,11 +1014,72 @@ def post_processing(loading_results, transcription_pk:int, project_slug:str, seg
     job.result = ET.tostring(TEI, encoding="utf-8", method="xml")
     job.save()
     return ET.tostring(TEI, encoding="utf-8", method="xml")
+    """
+    #  New logic for native output formats. 
+    exporter_data = ENABLED_EXPORTERS.get(format_)  #  A check of the format existence has already been done in views.
+    document = Document.objects.get(pk=document_pk)
+
+    transcription = Transcription.objects.get(pk=transcription_pk)
+    transcription_name = transcription.name
+    report = []
+    ExporterClass = exporter_data['class']
+
+    region_types = list(
+        document.valid_block_types.all().values_list("pk", flat=True)
+    )
+
+    user = User.objects.get(pk=user_pk)
+
+    exporter = ExporterClass(
+        part_pks = parts,
+        region_types = region_types,
+        include_images=False,
+        include_characters=False,
+        user=user,
+        document=document, 
+        transcription=transcription,
+        report=report
+    )
+
+    exporter.render()
+    filepath = exporter.filepath
+    if not os.path.exists(filepath):
+        raise Exception("Failed to render the document")
     
+    filename = os.path.basename(filepath)
+    file_extension = getattr(exporter, 'file_extension', "txt")
+    content_type = "application/zip" if file_extension == "zip" else "text/plain"
+
+    #  response = FileResponse(open(filepath, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
+
+
+    #  garbage collection
+    project = Project.objects.get(slug=project_slug)
+    project.delete()
+    segmentation_model = OcrModel.objects.get(pk=segmentation_model_id)
+    transcription_model = OcrModel.objects.get(pk=transcription_model_id)
+    segmentation_model.delete()
+    transcription_model.delete()
+
+    job = AsyncJobStatus.objects.get(id=job_id)
+    job.status = 'completed'
+    job.result = {
+        'filename': filename,
+        'file_path': filepath,
+        'download_url': f"/api/download-export/{job.id}/",
+        'content_type': content_type
+    }
+    job.save()
+
+    #  TODO: implement logic to clean file created in memory after response
+    
+
+
+
 
 @shared_task(base=TaskWithFailure)
 def orchestration_general_workflow(document_id: int, user_id: int, input_data: dict, segmentation_model_id: int,
-                            transcription_model_id: int, transcription_obj_id: int, project_slug: str, job_id):
+                            transcription_model_id: int, transcription_obj_id: int, project_slug: str, job_id, format_="text"):
 
     from django.core.files.uploadedfile import SimpleUploadedFile
     from core.models import DocumentPart, Metadata, DocumentMetadata, OcrModelDocument
@@ -1258,6 +1326,9 @@ def orchestration_general_workflow(document_id: int, user_id: int, input_data: d
         'transcription_pk': transcription.pk,
         'user_pk': user.pk,        
         'project_slug': project_slug,
+        'format_': format_,
+        'document_pk': document.pk,
+        'user_pk': user.pk,
     }
 
     loading_group = group(loading_chains)
