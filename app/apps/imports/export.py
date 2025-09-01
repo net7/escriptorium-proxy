@@ -73,7 +73,15 @@ class TextExporter(BaseExporter):
     file_extension = "txt"
 
     def render(self):
-        region_filters = Block.get_filters(block_types=self.region_types, filtering_lines=True)
+        # Check if document has any blocks, if not include orphan lines
+        Block = apps.get_model("core", "Block")
+        has_blocks = Block.objects.filter(document_part__pk__in=self.part_pks).exists()
+        
+        region_types = list(self.region_types)
+        if not has_blocks:
+            region_types.append("Orphan")
+        
+        region_filters = Block.get_filters(block_types=region_types, filtering_lines=True)
 
         LineTranscription = apps.get_model("core", "LineTranscription")
         lines = (
@@ -98,7 +106,6 @@ class TextExporter(BaseExporter):
                     ))
                     docid = trans.line.document_part.pk
                 fh.write("%s\n" % trans.content)
-            fh.close()
 
 
 class XMLTemplateExporter(BaseExporter):
@@ -115,10 +122,18 @@ class XMLTemplateExporter(BaseExporter):
         # since this is filtering Blocks and not LineTranscriptions, it needs to handle orphans
         # separately
         include_orphans = False
-        if "Orphan" in self.region_types:
+        region_types = list(self.region_types)
+        
+        # Check if document has any blocks, if not include orphan lines
+        Block = apps.get_model("core", "Block")
+        has_blocks = Block.objects.filter(document_part__pk__in=self.part_pks).exists()
+        if not has_blocks:
+            region_types.append("Orphan")
+        
+        if "Orphan" in region_types:
             include_orphans = True
-            self.region_types.remove("Orphan")
-        region_filters = Block.get_filters(block_types=self.region_types, filtering_lines=False)
+            region_types.remove("Orphan")
+        region_filters = Block.get_filters(block_types=region_types, filtering_lines=False)
 
         with EsZipFile(self.filepath, "w") as zip_:
             mets_elements = []
@@ -227,7 +242,15 @@ class OpenITIMARkdownExporter(BaseExporter):
             document=self.document, pk__in=self.part_pks
         )
 
-        region_filters = Block.get_filters(block_types=self.region_types, filtering_lines=True)
+        # Check if document has any blocks, if not include orphan lines
+        Block = apps.get_model("core", "Block")
+        has_blocks = Block.objects.filter(document_part__pk__in=self.part_pks).exists()
+        
+        region_types = list(self.region_types)
+        if not has_blocks:
+            region_types.append("Orphan")
+        
+        region_filters = Block.get_filters(block_types=region_types, filtering_lines=True)
 
         with EsZipFile(self.filepath, "w") as zip_:
             for part in parts:
