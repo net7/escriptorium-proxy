@@ -8,6 +8,7 @@ x-app:
   env_file: variables.env
   volumes:
     - ./app/:/usr/src/app/
+    - ./front/:/usr/src/app/front/
     - static:/usr/src/app/static
     - media:/usr/src/app/media
   command: /bin/true

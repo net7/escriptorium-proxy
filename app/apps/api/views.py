@@ -1910,7 +1910,8 @@ class ExportTranscriptionView(APIView):
         file_extension = getattr(exporter, "file_extension", "txt")
         content_type = "application/zip" if file_extension == "zip" else "text/plain"
 
-        response = FileResponse(open(filepath, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
+        file_handle = open(filepath, 'rb')
+        response = FileResponse(file_handle, as_attachment=True, filename=filename, content_type=content_type)
 
         def cleanup(file_path):
             try:
