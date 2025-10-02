@@ -9,7 +9,7 @@ app/escriptorium/local_settings.py
 app/static/
 app/media/
 app/test_media/
-app/homepage/
+#app/homepage/
 *.log
 front/node_modules
 front/dist
