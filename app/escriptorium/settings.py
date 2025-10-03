@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'django_filters',
     'captcha',
+    'drf_spectacular',
 
     'bootstrap',
     'versioning',
@@ -425,6 +426,15 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'core.pagination.CustomPagination',
     'PAGE_SIZE': 10,
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'eScriptorium API',
+    'DESCRIPTION': 'API documentation for eScriptorium - Digital Library OCR platform',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
 }
 
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 10000

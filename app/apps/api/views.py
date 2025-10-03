@@ -29,6 +29,8 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework.serializers import PrimaryKeyRelatedField
 from rest_framework.viewsets import GenericViewSet, ModelViewSet, ReadOnlyModelViewSet
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+from drf_spectacular.types import OpenApiTypes
 
 """
 To create high-level endpoint
@@ -1600,7 +1602,57 @@ class ProjectandDocumentCreateView(APIView):
 class ProjectandDocumentCreateView(APIView):
 
     parser_classes = [MultiPartParser, FormParser]
-    
+
+    @extend_schema(
+        summary="Create project, document and run OCR workflow",
+        description="""
+        High-level endpoint that creates a project, document, loads OCR models,
+        and executes segmentation and transcription asynchronously.
+
+        Supports two input types:
+        - 'image': Upload a single image file
+        - 'manifest': Import from IIIF manifest URL
+
+        Returns a job_id to track the asynchronous workflow progress.
+        """,
+        request={
+            'multipart/form-data': {
+                'type': 'object',
+                'properties': {
+                    'project': {'type': 'string', 'description': 'JSON string containing project data (e.g., {"name": "My Project"})'},
+                    'document': {'type': 'string', 'description': 'JSON string containing document data (e.g., {"name": "My Document"})'},
+                    'input_type': {'type': 'string', 'enum': ['image', 'manifest'], 'description': 'Type of input: image file or IIIF manifest'},
+                    'image': {'type': 'string', 'format': 'binary', 'description': 'Image file (required if input_type=image)'},
+                    'iiif_uri': {'type': 'string', 'description': 'IIIF manifest URI (required if input_type=manifest)'},
+                    'segmentation_model': {'type': 'string', 'description': 'JSON string with segmentation model data'},
+                    'segmentation_model_file': {'type': 'string', 'format': 'binary', 'description': 'Segmentation model file'},
+                    'transcription_model': {'type': 'string', 'description': 'JSON string with transcription model data'},
+                    'transcription_model_file': {'type': 'string', 'format': 'binary', 'description': 'Transcription model file'},
+                    'transcription_name': {'type': 'string', 'description': 'Name for the transcription object'},
+                    'format': {'type': 'string', 'enum': ['text', 'pagexml', 'alto'], 'description': 'Export format for transcription output'}
+                },
+                'required': ['project', 'document', 'input_type', 'segmentation_model', 'transcription_model', 'transcription_name', 'format']
+            }
+        },
+        responses={
+            201: {
+                'description': 'Successfully created and started workflow',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'project': {'slug': 'my-project', 'name': 'My Project'},
+                            'document': {'pk': 1, 'name': 'My Document'},
+                            'segmentation_model': {'pk': 1, 'name': 'Segmentation Model'},
+                            'transcription_model': {'pk': 2, 'name': 'Transcription Model'},
+                            'transcription': {'pk': 1, 'name': 'My Transcription'},
+                            'job_id': '550e8400-e29b-41d4-a716-446655440000'
+                        }
+                    }
+                }
+            },
+            400: OpenApiResponse(description='Invalid request data')
+        }
+    )
     def post(self, request, *args, **kwargs):
         #  This first part is synchronous: it creates a project, a document, a part (there is a dependency but creation should not 
         # involve asynchronous tasks), loads the ocr models, creates a transcription. If something goes wrong, returns error response, 
@@ -1839,6 +1891,45 @@ def wait_for_tasks(chain_ids, poll_interval=0.5, max_wait=60):
 
 
 class CheckTranscriptionStatusView(APIView):
+
+    @extend_schema(
+        summary="Check OCR workflow job status",
+        description="""
+        Check the status of an asynchronous OCR workflow job started by the
+        create-project-and-document endpoint.
+
+        Returns the job status ('pending', 'processing', 'completed', 'failed')
+        and result data including download URL when completed.
+        """,
+        parameters=[
+            OpenApiParameter(
+                name='job_id',
+                type=OpenApiTypes.UUID,
+                location=OpenApiParameter.QUERY,
+                description='UUID of the job to check',
+                required=True
+            )
+        ],
+        responses={
+            200: {
+                'description': 'Job status retrieved successfully',
+                'content': {
+                    'application/json': {
+                        'example': {
+                            'job_id': '550e8400-e29b-41d4-a716-446655440000',
+                            'status': 'completed',
+                            'result': {
+                                'download_url': '/api/download-export/',
+                                'filename': 'transcription.txt',
+                                'content_type': 'text/plain'
+                            }
+                        }
+                    }
+                }
+            },
+            404: OpenApiResponse(description='Job not found')
+        }
+    )
     def get(self, request, *args, **kwargs):
         try:
             job = AsyncJobStatus.objects.get(id=request.query_params.get('job_id'))
@@ -1860,6 +1951,43 @@ class CheckTranscriptionStatusView(APIView):
         )
 
 class ExportTranscriptionView(APIView):
+
+    @extend_schema(
+        summary="Export transcription in specified format",
+        description="""
+        Export document part transcriptions in various formats (text, PageXML, ALTO).
+
+        Returns a file download response with the exported transcription data.
+        """,
+        request={
+            'application/x-www-form-urlencoded': {
+                'type': 'object',
+                'properties': {
+                    'format': {'type': 'string', 'enum': ['text', 'pagexml', 'alto'], 'description': 'Export format'},
+                    'part_pk': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'List of document part PKs to export'},
+                    'document_name': {'type': 'string', 'description': 'Name of the document'},
+                    'transcription_name': {'type': 'string', 'description': 'Name of the transcription'}
+                },
+                'required': ['format', 'part_pk', 'document_name', 'transcription_name']
+            }
+        },
+        responses={
+            200: {
+                'description': 'File download response',
+                'content': {
+                    'application/zip': {
+                        'schema': {
+                            'type': 'string',
+                            'format': 'binary'
+                        }
+                    }
+                }
+            },
+            400: OpenApiResponse(description='Invalid request parameters'),
+            404: OpenApiResponse(description='Document or transcription not found'),
+            500: OpenApiResponse(description='Export failed')
+        }
+    )
     def post(self, request):
         format_ = request.data.get("format")
         part_pks = request.data.getlist("part_pk")
@@ -1923,6 +2051,40 @@ class ExportTranscriptionView(APIView):
         return response
 
 class DownloadExportView(APIView):
+
+    @extend_schema(
+        summary="Download completed workflow export",
+        description="""
+        Download the export file for a completed OCR workflow job.
+
+        Use this endpoint after checking job status with check-transcription-status
+        and confirming the job is completed.
+        """,
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'job_id': {'type': 'string', 'format': 'uuid', 'description': 'UUID of the completed job'}
+                },
+                'required': ['job_id']
+            }
+        },
+        responses={
+            200: {
+                'description': 'File download response',
+                'content': {
+                    'application/octet-stream': {
+                        'schema': {
+                            'type': 'string',
+                            'format': 'binary'
+                        }
+                    }
+                }
+            },
+            400: OpenApiResponse(description='Job not completed or invalid result data'),
+            404: OpenApiResponse(description='Job not found')
+        }
+    )
     def post(self, request):
         job_id = request.data.get("job_id")
         job = get_object_or_404(AsyncJobStatus, id=job_id)

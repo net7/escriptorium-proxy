@@ -1,6 +1,7 @@
 """URLs here"""
 from django.urls import include, path
 from rest_framework_nested import routers
+from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
 from api.views import (
     AnnotationComponentViewSet,
@@ -80,8 +81,12 @@ urlpatterns = [
     path('', include(projects_router.urls)),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path('token-auth/', RegenerableAuthToken.as_view()),
-    path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint. 
+    path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint.
     path('check-transcription-status/', CheckTranscriptionStatusView.as_view()),
     path('export-transcription/', ExportTranscriptionView.as_view()),
     path('download-export/', DownloadExportView.as_view()),
+    # OpenAPI schema and documentation
+    path('schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('docs/', SpectacularSwaggerView.as_view(url_name='api:schema'), name='swagger-ui'),
+    path('redoc/', SpectacularRedocView.as_view(url_name='api:schema'), name='redoc'),
 ]
