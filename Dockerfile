@@ -23,6 +23,7 @@ COPY ./app/entrypoint.sh /usr/src/app/entrypoint.sh
 RUN chmod +x /usr/src/app/entrypoint.sh
 COPY ./app/manage.py /usr/src/app/manage.py
 COPY ./app/requirements.txt /usr/src/app/requirements.txt
+RUN pip install --root-user-action ignore -q -r requirements.txt
 COPY ./app/uwsgi.ini /usr/src/app/uwsgi.ini
 
 COPY ./app/apps /usr/src/app/apps
