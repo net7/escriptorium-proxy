@@ -18,6 +18,7 @@ from api.views import (
     ExportTranscriptionView,
     DownloadExportView,
     GroupViewSet,
+    HealthCheckView,
     ImageAnnotationViewSet,
     ImportViewSet,
     LineTranscriptionViewSet,
@@ -81,6 +82,7 @@ urlpatterns = [
     path('', include(projects_router.urls)),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework')),
     path('token-auth/', RegenerableAuthToken.as_view()),
+    path('health/', HealthCheckView.as_view()),
     path('create-project-and-document/', ProjectandDocumentCreateView.as_view()),  #  Second version of a high-level endpoint.
     path('check-transcription-status/', CheckTranscriptionStatusView.as_view()),
     path('export-transcription/', ExportTranscriptionView.as_view()),

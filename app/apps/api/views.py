@@ -2108,5 +2108,32 @@ class DownloadExportView(APIView):
             )
         
         return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
+
+
+class HealthCheckView(APIView):
+    permission_classes = []
+    authentication_classes = []
+    
+    @extend_schema(
+        summary="Health check endpoint",
+        description="Simple health check endpoint that returns API status without authentication",
+        responses={
+            200: {
+                'description': 'API is healthy',
+                'content': {
+                    'application/json': {
+                        'schema': {
+                            'type': 'object',
+                            'properties': {
+                                'message': {'type': 'string'}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+    def get(self, request):
+        return JsonResponse({"message": "Here escriptorium API"})
         
         
