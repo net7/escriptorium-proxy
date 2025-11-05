@@ -2110,7 +2110,7 @@ class DownloadExportView(APIView):
         return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=filename, content_type=content_type)
 
 
-class EscriptoriumStatusView(APIView):
+class StatusView(APIView):
     permission_classes = []
     authentication_classes = []
     
