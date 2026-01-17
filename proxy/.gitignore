@@ -22,3 +22,11 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+bun.lock
+composer.lock
+package-lock.json
+.scribe
+
+public/vendor/scribe
+resources/views/scribe
