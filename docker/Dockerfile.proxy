@@ -1,0 +1,126 @@
+# Laravel Proxy Dockerfile
+# PHP 8.4-FPM with extensions for Laravel + Bun for asset compilation
+
+FROM php:8.4-fpm-alpine as base
+
+# Install system dependencies
+RUN apk add --no-cache \
+    git \
+    curl \
+    libpng-dev \
+    libjpeg-turbo-dev \
+    freetype-dev \
+    libzip-dev \
+    zip \
+    unzip \
+    oniguruma-dev \
+    icu-dev \
+    mariadb-client \
+    supervisor
+
+# Install PHP extensions
+RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
+    && docker-php-ext-install -j$(nproc) \
+    pdo \
+    pdo_mysql \
+    mbstring \
+    exif \
+    pcntl \
+    bcmath \
+    gd \
+    zip \
+    intl \
+    opcache
+
+# Install Redis extension
+RUN apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del .build-deps
+
+# Install Composer
+COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+
+# Install Bun (using official binary for Alpine/musl)
+RUN apk add --no-cache bash \
+    && curl -fsSL https://bun.sh/install | bash \
+    && ln -s /root/.bun/bin/bun /usr/local/bin/bun
+ENV PATH="/root/.bun/bin:${PATH}"
+
+# Set working directory
+WORKDIR /var/www/html
+
+# Copy entrypoint script
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# -------------------------------------------
+# Development Stage
+# -------------------------------------------
+FROM base as development
+
+# Copy composer files first for better caching
+COPY proxy/composer.json proxy/composer.lock ./
+
+# Install development dependencies
+RUN composer install --no-scripts --no-autoloader
+
+# Copy application code
+COPY proxy/ .
+
+# Generate autoloader
+RUN composer dump-autoload --optimize
+
+# Copy Bun files and install dependencies
+RUN bun install
+
+# PHP configuration for development
+RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
+
+# Expose PHP-FPM port
+EXPOSE 9000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["php-fpm"]
+
+# -------------------------------------------
+# Production Stage
+# -------------------------------------------
+FROM base as production
+
+# Copy composer files first for better caching
+COPY proxy/composer.json proxy/composer.lock ./
+
+# Install production dependencies only
+RUN composer install --no-dev --no-scripts --no-autoloader --optimize-autoloader
+
+# Copy application code
+COPY proxy/ .
+
+# Generate optimized autoloader
+RUN composer dump-autoload --optimize --classmap-authoritative
+
+# Build assets with Bun
+RUN bun install --production \
+    && bun run build
+
+# PHP configuration for production
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# Configure OPcache for production
+RUN echo "opcache.enable=1" >> "$PHP_INI_DIR/conf.d/opcache.ini" \
+    && echo "opcache.memory_consumption=256" >> "$PHP_INI_DIR/conf.d/opcache.ini" \
+    && echo "opcache.interned_strings_buffer=16" >> "$PHP_INI_DIR/conf.d/opcache.ini" \
+    && echo "opcache.max_accelerated_files=20000" >> "$PHP_INI_DIR/conf.d/opcache.ini" \
+    && echo "opcache.validate_timestamps=0" >> "$PHP_INI_DIR/conf.d/opcache.ini"
+
+# Set proper permissions
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html/storage \
+    && chmod -R 755 /var/www/html/bootstrap/cache
+
+# Expose PHP-FPM port
+EXPOSE 9000
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["php-fpm"]

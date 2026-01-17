@@ -1,0 +1,367 @@
+# Docker Compose - Production Environment
+# Features: Optimized images, health checks, resource limits, NO phpMyAdmin, NO Flower
+# Platform: Auto-detects ARM64 (Apple Silicon) and AMD64
+
+services:
+  # ===========================================
+  # NGINX REVERSE PROXY
+  # ===========================================
+  nginx:
+    build:
+      context: ./docker/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - proxy-public:/var/www/html/public:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      proxy-php:
+        condition: service_healthy
+      escriptorium-web:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+  # ===========================================
+  # LARAVEL PROXY SERVICES
+  # ===========================================
+  proxy-php:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+      target: production
+    volumes:
+      - proxy-public:/var/www/html/public
+      - proxy-storage:/var/www/html/storage
+    env_file:
+      - .env.production
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          memory: 256M
+
+  proxy-queue:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+      target: production
+    volumes:
+      - proxy-storage:/var/www/html/storage
+    env_file:
+      - .env.production
+    command: php artisan queue:work --tries=3 --timeout=90 --max-jobs=1000 --max-time=3600
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ===========================================
+  # LARAVEL DATABASES
+  # ===========================================
+  mariadb:
+    image: mariadb:11
+    expose:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ===========================================
+  # ESCRIPTORIUM SERVICES (INTERNAL ONLY)
+  # Build locally to support ARM64 (Apple Silicon)
+  # ===========================================
+  escriptorium-web:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: uwsgi --ini /usr/src/app/uwsgi.ini
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  escriptorium-ws:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: daphne --bind 0.0.0.0 --port 5000 -v 1 escriptorium.asgi:application
+    expose:
+      - "5000"
+    depends_on:
+      - escriptorium-web
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # ===========================================
+  # ESCRIPTORIUM DATABASES
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          memory: 1G
+
+  redis:
+    image: redis:alpine
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  # ===========================================
+  # ESCRIPTORIUM CELERY WORKERS
+  # Build locally to support ARM64 (Apple Silicon)
+  # ===========================================
+  celery-main:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    environment:
+      - OMP_NUM_THREADS=1
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q default -c 10 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          memory: 2G
+
+  celery-live:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q live -c 10 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+
+  celery-low-priority:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q low-priority -c 10 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+
+  celery-gpu:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    environment:
+      - KRAKEN_TRAINING_DEVICE=cpu
+      # For GPU support uncomment below:
+      # - KRAKEN_TRAINING_DEVICE=cuda:0
+      # - NVIDIA_VISIBLE_DEVICES=all
+      # - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu -c 1 --max-tasks-per-child=1"
+    shm_size: '3gb'
+    # For GPU support uncomment below:
+    # runtime: nvidia
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '6'
+          memory: 16G
+        reservations:
+          memory: 4G
+          # For GPU support uncomment below:
+          # devices:
+          #   - capabilities: [gpu]
+
+  mail:
+    build:
+      context: ./escriptorium/exim
+      dockerfile: Dockerfile
+    expose:
+      - "25"
+    environment:
+      - PRIMARY_HOST=${DOMAIN}
+      - ALLOWED_HOSTS=escriptorium-web ; celery-main ; celery-live ; celery-low-priority ; docker0
+    networks:
+      - app-network
+    restart: always
+
+# ===========================================
+# NETWORKS
+# ===========================================
+networks:
+  app-network:
+    driver: bridge
+
+# ===========================================
+# VOLUMES
+# ===========================================
+volumes:
+  mariadb-data:
+  postgres-data:
+  redis-data:
+  proxy-public:
+  proxy-storage:
+  escriptorium-static:
+  escriptorium-media:
