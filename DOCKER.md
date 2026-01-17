@@ -1,104 +1,102 @@
 # Docker Setup - eScriptorium + Laravel Proxy
 
-This project uses Docker Compose to run the full stack with three environment configurations.
+Configurazione Docker completa per Laravel proxy + eScriptorium con tre ambienti.
 
-## Architecture
+## Architettura
 
-- **Laravel Proxy** (PHP 8.4-FPM): Routes external requests, calls eScriptorium internally
-- **eScriptorium**: Django app (NOT exposed externally - internal only)
-- **MariaDB**: Laravel database
-- **PostgreSQL**: eScriptorium database
-- **Redis**: Caching and queues for both apps
-- **Nginx**: Reverse proxy (only exposes Laravel)
+- **Laravel Proxy** (PHP 8.4-FPM + Bun): Frontend esposto, chiama eScriptorium internamente
+- **eScriptorium**: Backend Django (interno, accessibile via nginx su porta 8082 in dev)
+- **MariaDB**: Database Laravel (interno)
+- **PostgreSQL**: Database eScriptorium (interno)
+- **Redis**: Cache e code per entrambe le app
 
-## Quick Start
-
-### Development (with hot reload)
+## Quick Start - Development
 
 ```bash
-# Copy environment file
+# 1. Copia file environment
 cp .env.development.example .env.development
-
-# Copy eScriptorium variables
 cp escriptorium/variables.env_example escriptorium/variables.env
 
-# Start all services
-docker compose -f docker-compose.development.yml up -d
+# 2. Genera APP_KEY nel proxy/.env (se non presente)
+# Assicurati che proxy/.env abbia APP_KEY=base64:... valida
 
-# Run Laravel migrations
-docker compose -f docker-compose.development.yml exec proxy-php php artisan migrate
+# 3. Avvia tutti i servizi
+docker compose -f docker-compose.development.yml up -d --build
 
-# Generate app key
-docker compose -f docker-compose.development.yml exec proxy-php php artisan key:generate
+# 4. Attendi che i container siano healthy, poi accedi
 ```
 
-**Access points:**
-- Application: http://localhost
-- phpMyAdmin: http://localhost:8081
-- Vite HMR: http://localhost:5173
-- Flower: http://localhost:5555
+## Porte - Development
 
-### Staging
+| Servizio | URL |
+|----------|-----|
+| **Laravel App** | http://localhost:8080 |
+| **eScriptorium** | http://localhost:8082 |
+| **phpMyAdmin** | http://localhost:8081 |
+| **Flower** | http://localhost:5555 |
+| **Vite HMR** | http://localhost:5173 |
+
+## Servizi per Ambiente
+
+| Servizio | Development | Staging | Production |
+|----------|-------------|---------|------------|
+| Laravel + Queue | ✓ hot reload | ✓ | ✓ |
+| eScriptorium | ✓ :8082 | ✓ interno | ✓ interno |
+| phpMyAdmin | ✓ :8081 | ✓ | ✗ |
+| Flower | ✓ :5555 | ✓ | ✗ |
+| Celery Workers | ✓ | ✓ | ✓ (multiple) |
+
+## File Environment
+
+- `proxy/.env` - Laravel legge questo file (deve avere APP_KEY valida!)
+- `.env.development` - Variabili Docker per development
+- `escriptorium/variables.env` - Configurazione eScriptorium
+
+## Staging
 
 ```bash
 cp .env.staging.example .env.staging
-# Edit .env.staging with your credentials
-
+# Modifica con credenziali sicure
 docker compose -f docker-compose.staging.yml up -d --build
 ```
 
-### Production
+## Production
 
 ```bash
 cp .env.production.example .env.production
-# Edit .env.production with secure credentials
-
+# Modifica con credenziali sicure
 docker compose -f docker-compose.production.yml up -d --build
 ```
 
-## Services Overview
-
-| Service | Development | Staging | Production |
-|---------|-------------|---------|------------|
-| Laravel App | ✓ Hot reload | ✓ | ✓ |
-| Queue Worker | ✓ | ✓ | ✓ (2 replicas) |
-| phpMyAdmin | ✓ :8081 | ✓ :8081 | ✗ |
-| Flower | ✓ :5555 | ✓ :5555 | ✗ |
-| eScriptorium | ✓ internal | ✓ internal | ✓ internal |
-
-## Hot Reload (Development)
-
-Laravel hot reload works automatically via:
-- Volume mounting of `./proxy` directory
-- Bun Vite dev server on port 5173
-- PHP-FPM with development configuration
-
-To watch for changes:
-```bash
-# Vite is already running, but if you need to restart:
-docker compose -f docker-compose.development.yml restart proxy-vite
-```
-
-## GPU Support (Production)
-
-To enable GPU for Kraken training, edit `docker-compose.production.yml`:
-
-1. Uncomment the NVIDIA environment variables in `celery-gpu`
-2. Uncomment `runtime: nvidia`
-3. Uncomment GPU device reservations
-
-## Useful Commands
+## Comandi Utili
 
 ```bash
-# View logs
+# Logs
 docker compose -f docker-compose.development.yml logs -f
 
 # Laravel artisan
-docker compose -f docker-compose.development.yml exec proxy-php php artisan <command>
+docker compose -f docker-compose.development.yml exec proxy-php php artisan <cmd>
 
-# Access MariaDB CLI
-docker compose -f docker-compose.development.yml exec mariadb mysql -u laravel -p
+# Generare nuova APP_KEY
+docker compose -f docker-compose.development.yml exec proxy-php php artisan key:generate --show
 
-# Rebuild a specific service
-docker compose -f docker-compose.development.yml build --no-cache proxy-php
+# eScriptorium collectstatic
+docker compose -f docker-compose.development.yml exec escriptorium-web python manage.py collectstatic
+
+# Ricostruire un servizio
+docker compose -f docker-compose.development.yml build --no-cache <service>
+
+# Fermare tutto
+docker compose -f docker-compose.development.yml down
 ```
+
+## Note ARM64 (Apple Silicon)
+
+I servizi vengono buildati localmente per supportare ARM64. Alcuni container (eScriptorium, Flower) mostrano warning "AMD64" ma funzionano via emulazione Rosetta.
+
+## GPU Support (Production)
+
+Per abilitare GPU su Celery, modifica `docker-compose.production.yml`:
+1. Decommenta variabili NVIDIA in `celery-gpu`
+2. Decommenta `runtime: nvidia`
+3. Decommenta device reservations GPU
