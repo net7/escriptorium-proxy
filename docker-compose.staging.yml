@@ -226,6 +226,23 @@ services:
       - app-network
     restart: always
 
+  celery-live:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q live -c 2 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+
   celery-gpu:
     build:
       context: ./escriptorium
