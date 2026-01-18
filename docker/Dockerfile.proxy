@@ -1,7 +1,7 @@
 # Laravel Proxy Dockerfile
 # PHP 8.4-FPM with extensions for Laravel + Bun for asset compilation
 
-FROM php:8.4-fpm-alpine as base
+FROM php:8.4-fpm-alpine AS base
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -57,7 +57,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # -------------------------------------------
 # Development Stage
 # -------------------------------------------
-FROM base as development
+FROM base AS development
 
 # Copy composer files first for better caching
 COPY proxy/composer.json proxy/composer.lock ./
@@ -86,7 +86,7 @@ CMD ["php-fpm"]
 # -------------------------------------------
 # Production Stage
 # -------------------------------------------
-FROM base as production
+FROM base AS production
 
 # Copy composer files first for better caching
 COPY proxy/composer.json proxy/composer.lock ./
