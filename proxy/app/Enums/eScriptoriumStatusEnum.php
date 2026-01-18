@@ -10,6 +10,7 @@ enum eScriptoriumStatusEnum: string
     case Importing = 'importing';
     case Segmenting = 'segmenting';
     case Transcribing = 'transcribing';
+    case Downloading = 'downloading';
     case Completed = 'completed';
     case Failed = 'failed';
 
@@ -20,6 +21,7 @@ enum eScriptoriumStatusEnum: string
             self::Importing => 'IMPORTING',
             self::Segmenting => 'SEGMENTING',
             self::Transcribing => 'TRANSCRIBING',
+            self::Downloading => 'DOWNLOADING',
             self::Completed => 'COMPLETED',
             self::Failed => 'FAILED',
         };
@@ -32,6 +34,7 @@ enum eScriptoriumStatusEnum: string
             self::Importing => 'info',
             self::Segmenting => 'primary',
             self::Transcribing => 'purple',
+            self::Downloading => 'info',
             self::Completed => 'success',
             self::Failed => 'danger',
         };

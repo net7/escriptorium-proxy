@@ -20,6 +20,7 @@ return [
             'transcribe' => env('ESCRITORIUM_TRANSCRIBE_ENDPOINT', 'api/documents/{document_id}/transcribe/'),
             'transcriptions' => env('ESCRITORIUM_TRANSCRIPTIONS_ENDPOINT', 'api/documents/{document_id}/transcriptions/'),
             'tei_export' => env('ESCRITORIUM_TEI_EXPORT_ENDPOINT', 'api/documents/{document_id}/transcriptions/{transcription_id}/tei/'),
+            'export' => env('ESCRITORIUM_EXPORT_ENDPOINT', 'api/documents/{document_id}/export/'),
         ],
         'headers' => [
             'token_header' => env('ESCRITORIUM_TOKEN_HEADER', 'Token'),
@@ -38,5 +39,10 @@ return [
             'segment' => env('ESCRITORIUM_POLLING_MAX_ATTEMPTS_SEGMENT', 240),
             'transcribe' => env('ESCRITORIUM_POLLING_MAX_ATTEMPTS_TRANSCRIBE', 360),
         ],
+    ],
+    'websocket' => [
+        'base_url' => env('ESCRITORIUM_WEBSOCKET_BASE_URL', null), // If null, uses api.base_url
+        'endpoint' => env('ESCRITORIUM_WEBSOCKET_ENDPOINT', 'ws/notif/'),
+        'timeout' => env('ESCRITORIUM_WEBSOCKET_TIMEOUT', 600),
     ],
 ];

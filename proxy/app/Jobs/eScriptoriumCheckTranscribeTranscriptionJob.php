@@ -182,7 +182,7 @@ class eScriptoriumCheckTranscribeTranscriptionJob implements ShouldQueue
         Log::info('✨ [eScriptorium] OCR completed', ['transcription_id' => $this->transcription->id]);
 
         $this->dataManager->completeStep(eScriptoriumServiceDataManager::STEP_TRANSCRIBE);
-        dispatch(new eScriptoriumImportTeiJob($this->transcription));
+        dispatch(new eScriptoriumDownloadJob($this->transcription));
     }
 
     /**

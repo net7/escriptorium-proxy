@@ -78,6 +78,109 @@ class eScriptoriumService
         });
     }
 
+    /**
+     * Get the API token (public accessor for use in jobs).
+     */
+    public function getTokenPublic(): string
+    {
+        return $this->getToken();
+    }
+
+    /**
+     * Get a Django session cookie for WebSocket authentication.
+     *
+     * @return string The session ID
+     *
+     * @throws \RuntimeException If authentication fails
+     */
+    public function getSessionCookie(): string
+    {
+        // Prima richiesta per ottenere CSRF token
+        $loginPageResponse = Http::get("{$this->baseUrl}/login/");
+        $cookies = $loginPageResponse->cookies();
+        $csrfToken = $cookies->getCookieByName('csrftoken')?->getValue();
+
+        if (! $csrfToken) {
+            // Prova a estrarre dall'HTML
+            preg_match('/name=["\']csrfmiddlewaretoken["\'][^>]*value=["\']([^"\']+)["\']/', $loginPageResponse->body(), $matches);
+            $csrfToken = $matches[1] ?? null;
+        }
+
+        if (! $csrfToken) {
+            throw new \RuntimeException('Could not obtain CSRF token for WebSocket authentication');
+        }
+
+        // Converti i cookie in formato semplice chiave => valore
+        $cookieArray = [];
+        foreach ($cookies->toArray() as $cookie) {
+            $cookieArray[$cookie['Name']] = $cookie['Value'];
+        }
+
+        // Login per ottenere session cookie
+        $response = Http::withCookies($cookieArray, parse_url($this->baseUrl, PHP_URL_HOST))
+            ->asForm()
+            ->post("{$this->baseUrl}/login/", [
+                'username' => $this->username,
+                'password' => $this->password,
+                'csrfmiddlewaretoken' => $csrfToken,
+            ]);
+
+        $sessionCookies = $response->cookies();
+        $sessionId = $sessionCookies->getCookieByName('sessionid')?->getValue();
+
+        if (! $sessionId) {
+            throw new \RuntimeException('Could not obtain session cookie for WebSocket authentication');
+        }
+
+        return $sessionId;
+    }
+
+    /**
+     * Create a WebSocket client configured for eScriptorium.
+     *
+     * @param  int|null  $timeout  Connection timeout in seconds (default from config)
+     * @return \WebSocket\Client Configured WebSocket client
+     *
+     * @throws \RuntimeException If connection fails
+     */
+    public function createWebSocketClient(?int $timeout = null): \WebSocket\Client
+    {
+        $wsUrl = $this->getWebSocketUrl();
+
+        $sessionId = $this->getSessionCookie();
+
+        $client = new \WebSocket\Client($wsUrl);
+        $client->addHeader('Cookie', 'sessionid='.$sessionId);
+        $client->addHeader('Origin', rtrim($this->baseUrl, '/'));
+        $client->setTimeout($timeout ?? config('escriptorium.websocket.timeout', 600));
+
+        return $client;
+    }
+
+    /**
+     * Get the WebSocket URL for debugging.
+     */
+    public function getWebSocketUrl(): string
+    {
+        // Use dedicated WebSocket URL if configured, otherwise derive from API base URL
+        $wsBaseUrl = config('escriptorium.websocket.base_url');
+
+        if ($wsBaseUrl) {
+            $baseUrl = rtrim($wsBaseUrl, '/');
+            // If already ws:// or wss://, use as-is
+            if (str_starts_with($baseUrl, 'ws://') || str_starts_with($baseUrl, 'wss://')) {
+                $wsUrl = $baseUrl;
+            } else {
+                $wsUrl = str_replace(['http://', 'https://'], ['ws://', 'wss://'], $baseUrl);
+            }
+        } else {
+            $baseUrl = rtrim($this->baseUrl, '/');
+            $wsUrl = str_replace(['http://', 'https://'], ['ws://', 'wss://'], $baseUrl);
+        }
+
+        return $wsUrl.'/'.ltrim(config('escriptorium.websocket.endpoint'), '/');
+    }
+
     private function client(): PendingRequest
     {
         return Http::baseUrl($this->baseUrl)
@@ -597,6 +700,45 @@ class eScriptoriumService
         }
 
         return true;
+    }
+
+    /**
+     * Trigger document export on eScriptorium.
+     *
+     * This is an ASYNCHRONOUS operation. The export completion is notified via WebSocket.
+     *
+     * @param  string  $documentId  The document pk
+     * @param  string  $transcriptionId  The transcription pk
+     * @param  array  $partsPks  The parts to export
+     * @param  string  $format  Export format (e.g., "teixml", "alto", "pagexml", "text")
+     * @return array Response with status
+     *
+     * @throws \RuntimeException If export request fails
+     */
+    public function exportDocument(string $documentId, string $transcriptionId, array $partsPks = [], string $format = 'teixml'): array
+    {
+        if (! $documentId || empty($documentId)) {
+            throw new \RuntimeException('eScriptorium export document request failed: Document ID is required');
+        }
+
+        if (! $transcriptionId || empty($transcriptionId)) {
+            throw new \RuntimeException('eScriptorium export document request failed: Transcription ID is required');
+        }
+
+        $endpoint = str_replace('{document_id}', $documentId, config('escriptorium.api.endpoints.export'));
+
+        $response = $this->client()->post($endpoint, [
+            'file_format' => $format,
+            'transcription' => $transcriptionId,
+            'parts' => $partsPks,
+            'region_types' => [],
+        ]);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium export document request failed: '.$response->body());
+        }
+
+        return $response->json() ?? ['status' => 'ok'];
     }
 
     /**

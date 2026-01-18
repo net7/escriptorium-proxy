@@ -57,6 +57,8 @@ class eScriptoriumServiceDataManager
 
     public const STEP_FETCH_PARTS = 'fetch_parts';
 
+    public const STEP_DOWNLOAD = 'download';
+
     /**
      * Stati possibili per ogni step.
      */
