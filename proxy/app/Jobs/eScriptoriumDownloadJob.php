@@ -257,7 +257,11 @@ class eScriptoriumDownloadJob implements ShouldQueue
      */
     private function downloadFile(string $downloadUrl): string
     {
-        $baseUrl = rtrim(config('escriptorium.api.base_url'), '/');
+        // Use media base URL, fallback to websocket base URL, then API base URL
+        $baseUrl = config('escriptorium.media.base_url')
+            ?? config('escriptorium.websocket.base_url')
+            ?? config('escriptorium.api.base_url');
+        $baseUrl = rtrim($baseUrl, '/');
         $fullUrl = $baseUrl.$downloadUrl;
 
         $response = Http::withToken(

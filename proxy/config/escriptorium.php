@@ -45,4 +45,7 @@ return [
         'endpoint' => env('ESCRITORIUM_WEBSOCKET_ENDPOINT', 'ws/notif/'),
         'timeout' => env('ESCRITORIUM_WEBSOCKET_TIMEOUT', 600),
     ],
+    'media' => [
+        'base_url' => env('ESCRITORIUM_MEDIA_BASE_URL', null), // If null, uses websocket.base_url or api.base_url
+    ],
 ];
