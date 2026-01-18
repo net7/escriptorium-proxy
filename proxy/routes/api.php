@@ -3,16 +3,29 @@
 use App\Http\Controllers\Api\V1\eScriptoriumController;
 use Illuminate\Support\Facades\Route;
 
-Route::group(['as' => 'escriptorium.'], function (): void {
+/*
+|--------------------------------------------------------------------------
+| API Routes
+|--------------------------------------------------------------------------
+|
+| All routes require API key authentication via X-API-Key header.
+| Permissions are checked based on the route group.
+|
+*/
+
+Route::group(['as' => 'escriptorium.', 'middleware' => 'api.key'], function (): void {
     Route::get('/up', [eScriptoriumController::class, 'up'])->name('up');
-    Route::group(['prefix' => '/models', 'as' => 'models.'], function (): void {
+
+    Route::group(['prefix' => '/models', 'as' => 'models.', 'middleware' => 'api.key:models'], function (): void {
         Route::get('/', [eScriptoriumController::class, 'models'])->name('list');
         // Route::post('/', [eScriptoriumController::class, 'newModel'])->name('new');
     });
-    Route::group(['prefix' => '/scripts', 'as' => 'scripts.'], function (): void {
+
+    Route::group(['prefix' => '/scripts', 'as' => 'scripts.', 'middleware' => 'api.key:scripts'], function (): void {
         Route::get('/', [eScriptoriumController::class, 'scripts'])->name('list');
     });
-    Route::group(['prefix' => '/process', 'as' => 'process.'], function (): void {
+
+    Route::group(['prefix' => '/process', 'as' => 'process.', 'middleware' => 'api.key:process'], function (): void {
         Route::post('/', [eScriptoriumController::class, 'process'])->name('create');
     });
 });

@@ -47,6 +47,10 @@ wait_for_db
 echo "🗄️  Running migrations..."
 php artisan migrate --force
 
+# Run seeders
+echo "🌱 Running seeders..."
+php artisan db:seed
+
 # Create storage link if not exists
 if [ ! -L "public/storage" ]; then
     echo "🔗 Creating storage link..."
