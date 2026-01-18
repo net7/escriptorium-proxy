@@ -724,7 +724,7 @@ class eScriptoriumService
      *
      * @throws \RuntimeException If export request fails
      */
-    public function exportDocument(string $documentId, string $transcriptionId, array $partsPks = [], string $format = 'teixml', array $regionTypes = ['Orphan', 'Undefined']): array
+    public function exportDocument(string $documentId, string $transcriptionId, array $partsPks = [], string $format = 'teixml', array $regionTypes = []): array
     {
         if (! $documentId || empty($documentId)) {
             throw new \RuntimeException('eScriptorium export document request failed: Document ID is required');
@@ -732,6 +732,10 @@ class eScriptoriumService
 
         if (! $transcriptionId || empty($transcriptionId)) {
             throw new \RuntimeException('eScriptorium export document request failed: Transcription ID is required');
+        }
+
+        if (! $regionTypes || empty($regionTypes)) {
+            throw new \RuntimeException('eScriptorium export document request failed: Region types are required');
         }
 
         $endpoint = str_replace('{document_id}', $documentId, config('escriptorium.api.endpoints.export'));
@@ -742,7 +746,7 @@ class eScriptoriumService
             'include_images' => false,
             'transcription' => $transcriptionId,
             'parts' => $partsPks,
-            'region_types' => $regionTypes,
+            'region_types' => ['Orphan', 'Undefined', ...$regionTypes],
         ]);
 
         if (! $response->successful()) {

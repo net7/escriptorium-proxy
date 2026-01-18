@@ -82,6 +82,7 @@ class eScriptoriumDownloadJob implements ShouldQueue
         // ============================================================
         $documentId = $this->dataManager->getDocumentId();
         $transcriptionId = $this->dataManager->getTranscriptionId();
+        $documentValidRegionTypesIds = $this->dataManager->getDocumentValidRegionTypesIds();
 
         if (! $documentId) {
             $this->handleError('Document ID not found');
@@ -91,6 +92,12 @@ class eScriptoriumDownloadJob implements ShouldQueue
 
         if (! $transcriptionId) {
             $this->handleError('eScriptorium Transcription ID not found');
+
+            return;
+        }
+
+        if (empty($documentValidRegionTypesIds)) {
+            $this->handleError('Document valid region types not found');
 
             return;
         }
@@ -122,7 +129,7 @@ class eScriptoriumDownloadJob implements ShouldQueue
             // ============================================================
             // STEP 5: Lancia l'export TEI via API
             // ============================================================
-            $this->triggerExport($documentId, $transcriptionId);
+            $this->triggerExport($documentId, $transcriptionId, $documentValidRegionTypesIds);
 
             Log::info('📤 [eScriptorium] Export triggered', [
                 'transcription_id' => $this->transcription->id,
@@ -194,7 +201,7 @@ class eScriptoriumDownloadJob implements ShouldQueue
     /**
      * Lancia l'export TEI via API REST.
      */
-    private function triggerExport(int $documentId, int $transcriptionId): void
+    private function triggerExport(int $documentId, int $transcriptionId, array $documentValidRegionTypesIds): void
     {
         $partsPks = $this->dataManager->getPartsPks();
 
@@ -202,7 +209,8 @@ class eScriptoriumDownloadJob implements ShouldQueue
             (string) $documentId,
             (string) $transcriptionId,
             $partsPks,
-            'teixml'
+            'teixml',
+            $documentValidRegionTypesIds
         );
     }
 
