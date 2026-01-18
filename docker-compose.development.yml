@@ -31,7 +31,6 @@ services:
       target: development
     volumes:
       - ./proxy:/var/www/html
-      - /var/www/html/vendor
     env_file:
       - .env.development
     depends_on:
@@ -50,7 +49,6 @@ services:
       target: development
     volumes:
       - ./proxy:/var/www/html
-      - /var/www/html/vendor
     env_file:
       - .env.development
     command: php artisan queue:work --tries=3 --timeout=90

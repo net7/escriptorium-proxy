@@ -146,13 +146,22 @@ class eScriptoriumService
     public function createWebSocketClient(?int $timeout = null): \WebSocket\Client
     {
         $wsUrl = $this->getWebSocketUrl();
-
         $sessionId = $this->getSessionCookie();
+        $origin = rtrim($this->baseUrl, '/');
+        $timeoutSec = $timeout ?? config('escriptorium.websocket.timeout', 600);
 
         $client = new \WebSocket\Client($wsUrl);
+
+        // Add standard middlewares
+        $client->addMiddleware(new \WebSocket\Middleware\CloseHandler);
+        $client->addMiddleware(new \WebSocket\Middleware\PingResponder);
+
+        // Set handshake headers
         $client->addHeader('Cookie', 'sessionid='.$sessionId);
-        $client->addHeader('Origin', rtrim($this->baseUrl, '/'));
-        $client->setTimeout($timeout ?? config('escriptorium.websocket.timeout', 600));
+        $client->addHeader('Origin', $origin);
+
+        // Set timeout
+        $client->setTimeout($timeoutSec);
 
         return $client;
     }
