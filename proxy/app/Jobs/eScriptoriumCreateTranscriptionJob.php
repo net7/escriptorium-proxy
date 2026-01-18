@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -11,7 +12,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Modules\Transcription\Models\Transcription;
+use Illuminate\Support\Str;
 
 /**
  * Job per creare una trascrizione su eScriptorium.
@@ -77,7 +78,7 @@ class eScriptoriumCreateTranscriptionJob implements ShouldQueue
             // ============================================================
             // STEP 3: Crea la trascrizione su eScriptorium
             // ============================================================
-            $response = eScriptorium::createTranscription($documentId, $this->transcription->title);
+            $response = eScriptorium::createTranscription($documentId, Str::random(16));
 
             // ============================================================
             // STEP 4: Salva i dati della trascrizione eScriptorium

@@ -27,16 +27,7 @@ class ProcessRequest extends FormRequest
         $segmentationModelIds = implode(',', array_column($segmentationModels, 'pk'));
         $recognitionModelIds = implode(',', array_column($recognitionModels, 'pk'));
 
-        // project_id == Modules\Project\Models\Project::class
-        // document_id == Modules\LiteraryWork\Models\LiteraryWork::class
-        // script_name == EXTERNAL
-        // recognition_model_id == EXTERNAL
-        // segmentation_model_id == EXTERNAL
-
         $rules = [
-            'name' => ['required', 'string'],
-            'project_id' => ['required', 'integer', 'exists:projects,id'],
-            'document_id' => ['required', 'integer', 'exists:literary_works,id'],
             'script_name' => ['required', 'string', "in:{$scriptNames}"],
             'manifest_url' => ['required', 'string', 'url'],
             'pages' => ['nullable', 'string', new PagesRange],
@@ -51,12 +42,6 @@ class ProcessRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'project_id.required' => __('validation.escriptorium.process.project_id.required'),
-            'project_id.integer' => __('validation.escriptorium.process.project_id.integer'),
-            'project_id.exists' => __('validation.escriptorium.process.project_id.exists'),
-            'document_id.required' => __('validation.escriptorium.process.document_id.required'),
-            'document_id.integer' => __('validation.escriptorium.process.document_id.integer'),
-            'document_id.exists' => __('validation.escriptorium.process.document_id.exists'),
             'script_name.required' => __('validation.escriptorium.process.script_name.required'),
             'script_name.string' => __('validation.escriptorium.process.script_name.string'),
             'script_name.in' => __('validation.escriptorium.process.script_name.in'),

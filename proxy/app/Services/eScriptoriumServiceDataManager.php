@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use Modules\Transcription\Models\Transcription;
+use App\Models\Transcription;
 
 /**
  * Manager per la gestione strutturata dei dati di servizio eScriptorium.

@@ -8,15 +8,13 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\eScriptorium\NewModelRequest;
 use App\Http\Requests\eScriptorium\ProcessRequest;
 use App\Jobs\eScriptoriumImportDocumentJob;
+use App\Models\Transcription;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Number;
 use Illuminate\Support\Str;
-use Modules\LiteraryWork\Models\LiteraryWork;
-use Modules\Project\Models\Project;
-use Modules\Transcription\Models\Transcription;
 
 /**
  * Controller per la gestione delle API di eScriptorium.
@@ -190,57 +188,52 @@ class eScriptoriumController extends Controller
     {
         $data = $request->validated();
 
+        // Recupera l'API key autenticata dal middleware
+        $apiKey = $request->attributes->get('api_key');
+
         Log::info('🟢 [eScriptorium] Workflow triggered. Starting process...', [
             'data' => $data,
+            'api_key_id' => $apiKey->id,
         ]);
 
         try {
-            // ============================================================
-            // STEP 1: Recupera le entità locali dal database
-            // ============================================================
-
-            // Recupera il progetto locale (usato per il nome del progetto eScriptorium)
-            $project = Project::findOrFail($data['project_id']);
-
-            // Recupera l'opera letteraria (usata per il nome del documento eScriptorium)
-            $literaryWork = LiteraryWork::findOrFail($data['document_id']);
-
             // Variabili per memorizzare i dati di eScriptorium
             $escriptoriumProject = null;
             $escriptoriumDocument = null;
 
             // ============================================================
-            // STEP 2: Crea risorse su eScriptorium in una transazione
+            // STEP 1: Crea risorse su eScriptorium in una transazione
             // ============================================================
 
             // Usa una transazione per garantire che la Transcription locale
             // venga creata solo se le chiamate a eScriptorium hanno successo
-            $transcription = DB::transaction(function () use ($data, $project, $literaryWork, &$escriptoriumProject, &$escriptoriumDocument) {
+            $transcription = DB::transaction(function () use ($data, $apiKey, &$escriptoriumProject, &$escriptoriumDocument) {
 
                 // Crea il progetto su eScriptorium
-                // Il nome viene slugificato per essere URL-friendly
+                // Il nome è generato casualmente perché è temporaneo
                 // API: POST /api/projects/
-                $escriptoriumProject = eScriptorium::createProject(Str::slug($project->name));
+                $projectName = Str::random(16);
+                $escriptoriumProject = eScriptorium::createProject($projectName);
 
                 // Crea il documento nel progetto eScriptorium
                 // API: POST /api/documents/
-                // Parametri:
-                // - name: nome del documento (slug dell'opera letteraria)
-                // - project: slug del progetto appena creato
-                // - main_script: script/alfabeto selezionato dall'utente
+                $documentName = Str::random(16);
                 $escriptoriumDocument = eScriptorium::createDocument(
-                    Str::slug($literaryWork->title),
+                    $documentName,
                     $escriptoriumProject['slug'],
                     $data['script_name']
                 );
 
                 // Crea la Transcription locale per tracciare il processo
-                // Memorizza tutti i dati di eScriptorium in service_data per riferimento futuro
                 return Transcription::create([
-                    'literary_work_id' => $literaryWork->id,
-                    'title' => $data['name'],
+                    'api_key_id' => $apiKey->id,
+                    'script_name' => $data['script_name'],
+                    'manifest_url' => $data['manifest_url'],
+                    'pages' => $data['pages'] ?? null,
+                    'recognition_model_id' => $data['recognition_model_id'],
+                    'segmentation_model_id' => $data['segmentation_model_id'] ?? null,
+                    'text_direction' => $data['text_direction'],
                     'status' => eScriptoriumStatusEnum::Pending->value,
-                    'service_used' => 'escriptorium',
                     'service_data' => [
                         'escriptorium' => [
                             // Salva la request originale per accedere a model_id, etc.
@@ -255,7 +248,7 @@ class eScriptoriumController extends Controller
             });
 
             // ============================================================
-            // STEP 3: Avvia il job di import che innesca la catena di job
+            // STEP 2: Avvia il job di import che innesca la catena di job
             // ============================================================
 
             // Dispatcha il primo job della catena
@@ -265,11 +258,7 @@ class eScriptoriumController extends Controller
             // → CreateTranscriptionJob
             // → TranscribeTranscriptionJob → CheckTranscribeTranscriptionJob (polling)
             // → COMPLETED
-            dispatch(new eScriptoriumImportDocumentJob(
-                $transcription,
-                $project,
-                $literaryWork,
-            ));
+            dispatch(new eScriptoriumImportDocumentJob($transcription));
 
             Log::info('🚀 [eScriptorium] Process started', ['transcription_id' => $transcription->id]);
 
@@ -280,13 +269,6 @@ class eScriptoriumController extends Controller
                 'transcription_id' => $transcription->id,
                 'status' => 201,
             ], 201);
-
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'message' => __('validation.escriptorium.process.resource_not_found'),
-                'error' => $e->getMessage(),
-                'status' => 404,
-            ], 404);
 
         } catch (\Exception $e) {
             Log::error('❌ [eScriptorium] Process failed', [

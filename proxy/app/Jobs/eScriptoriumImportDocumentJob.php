@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -11,9 +12,7 @@ use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Log;
-use Modules\LiteraryWork\Models\LiteraryWork;
-use Modules\Project\Models\Project;
-use Modules\Transcription\Models\Transcription;
+use Illuminate\Support\Str;
 
 /**
  * Job per importare un documento IIIF in eScriptorium.
@@ -60,13 +59,9 @@ class eScriptoriumImportDocumentJob implements ShouldQueue
      * Crea una nuova istanza del job.
      *
      * @param  Transcription  $transcription  La trascrizione locale che traccia il processo
-     * @param  Project  $project  Il progetto locale (non usato direttamente, ma serializzato per riferimento)
-     * @param  LiteraryWork  $literaryWork  L'opera letteraria (non usata direttamente)
      */
     public function __construct(
         private Transcription $transcription,
-        private Project $project,
-        private LiteraryWork $literaryWork,
     ) {}
 
     /**
@@ -106,7 +101,7 @@ class eScriptoriumImportDocumentJob implements ShouldQueue
                 $documentId,
                 'iiif',
                 $manifestUrl,
-                $this->transcription->title
+                Str::random(16)
             );
 
             // ============================================================

@@ -162,6 +162,14 @@ class ApiKey extends Model
     }
 
     /**
+     * Get the transcriptions for this API key.
+     */
+    public function transcriptions(): HasMany
+    {
+        return $this->hasMany(Transcription::class);
+    }
+
+    /**
      * Get the rate limiter key for this API key.
      */
     public function rateLimiterKey(): string
