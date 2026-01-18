@@ -10,6 +10,7 @@ use App\Http\Requests\eScriptorium\ProcessRequest;
 use App\Jobs\eScriptoriumImportDocumentJob;
 use App\Models\Transcription;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -281,5 +282,36 @@ class eScriptoriumController extends Controller
                 'status' => 500,
             ], 500);
         }
+    }
+
+    /**
+     * Recupera lo stato di una trascrizione.
+     *
+     * Verifica che la trascrizione appartenga all'API key autenticata.
+     *
+     * @param  string  $id  UUID della trascrizione
+     * @return JsonResponse Stato della trascrizione
+     */
+    public function status(Request $request, string $id): JsonResponse
+    {
+        // Recupera l'API key autenticata dal middleware
+        $apiKey = $request->attributes->get('api_key');
+
+        // Cerca la trascrizione verificando che appartenga all'API key
+        $transcription = Transcription::where('id', $id)
+            ->where('api_key_id', $apiKey->id)
+            ->first();
+
+        if (! $transcription) {
+            return response()->json([
+                'message' => __('validation.escriptorium.status.not_found'),
+                'status' => 404,
+            ], 404);
+        }
+
+        return response()->json([
+            'id' => $transcription->id,
+            'status' => $transcription->status->getLabel(),
+        ]);
     }
 }

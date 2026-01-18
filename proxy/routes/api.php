@@ -28,4 +28,8 @@ Route::group(['as' => 'escriptorium.', 'middleware' => 'api.key'], function (): 
     Route::group(['prefix' => '/process', 'as' => 'process.', 'middleware' => 'api.key:process'], function (): void {
         Route::post('/', [eScriptoriumController::class, 'process'])->name('create');
     });
+
+    Route::group(['prefix' => '/status', 'as' => 'status.', 'middleware' => 'api.key:status'], function (): void {
+        Route::get('/{id}', [eScriptoriumController::class, 'status'])->name('show');
+    });
 });

@@ -31,7 +31,7 @@ php artisan apikey:generate
 
 # Non-interattivo
 php artisan apikey:generate "App Name" \
-  --permissions=models,scripts,process \
+  --permissions=models,scripts,process,status \
   --rate-limit=100 \
   --expires=2026-12-31
 ```
@@ -70,6 +70,7 @@ php artisan apikey:revoke <key-id> --force
 | `models` | `/v1/models/*` | Accesso ai modelli OCR |
 | `scripts` | `/v1/scripts/*` | Accesso agli scripts |
 | `process` | `/v1/process/*` | Invio job di processing |
+| `status` | `/v1/status/*` | Controllo stato trascrizioni |
 
 > **Nota:** Un array permessi vuoto garantisce accesso a tutti gli endpoint.
 

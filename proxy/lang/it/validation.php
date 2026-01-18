@@ -48,6 +48,9 @@ return [
                 'in' => 'La direzione del testo deve essere una tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl o ttb.',
             ],
         ],
+        'status' => [
+            'not_found' => 'Trascrizione non trovata o non autorizzata.',
+        ],
         'file' => [
             'types' => 'Il file deve essere un file di tipo :values.',
             'min' => 'Il file deve essere almeno :min kb.',

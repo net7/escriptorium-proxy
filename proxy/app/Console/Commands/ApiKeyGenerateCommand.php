@@ -12,7 +12,7 @@ class ApiKeyGenerateCommand extends Command
 {
     protected $signature = 'apikey:generate
                             {name? : Name of the API key}
-                            {--permissions= : Comma-separated list of permissions (models,scripts,process)}
+                            {--permissions= : Comma-separated list of permissions (models,scripts,process,status)}
                             {--rate-limit=60 : Requests per minute}
                             {--expires= : Expiration date (Y-m-d format)}';
 
@@ -36,8 +36,9 @@ class ApiKeyGenerateCommand extends Command
                     'models' => 'Models - Access OCR models',
                     'scripts' => 'Scripts - Access scripts',
                     'process' => 'Process - Submit processing jobs',
+                    'status' => 'Status - Check transcription status',
                 ],
-                default: ['models', 'scripts', 'process'],
+                default: ['models', 'scripts', 'process', 'status'],
                 hint: 'Leave empty for all permissions'
             );
         }

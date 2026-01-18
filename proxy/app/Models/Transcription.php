@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\eScriptoriumStatusEnum;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -30,6 +31,7 @@ class Transcription extends Model
             'recognition_model_id' => 'integer',
             'segmentation_model_id' => 'integer',
             'service_data' => 'array',
+            'status' => eScriptoriumStatusEnum::class,
         ];
     }
 
