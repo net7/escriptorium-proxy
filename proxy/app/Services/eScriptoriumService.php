@@ -738,9 +738,11 @@ class eScriptoriumService
 
         $response = $this->client()->post($endpoint, [
             'file_format' => $format,
+            'include_characters' => false,
+            'include_images' => false,
             'transcription' => $transcriptionId,
             'parts' => $partsPks,
-            'region_types' => [],
+            'region_types' => ['2'],
         ]);
 
         if (! $response->successful()) {
