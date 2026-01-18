@@ -115,6 +115,26 @@ services:
       - app-network
     restart: unless-stopped
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    ports:
+      - "5050:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+      - ./docker/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./docker/pgadmin/pgpass:/pgadmin4/pgpass:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
   # ===========================================
   # ESCRIPTORIUM SERVICES (INTERNAL ONLY)
   # Build locally to support ARM64 (Apple Silicon)
@@ -292,3 +312,4 @@ volumes:
   escriptorium-static:
   escriptorium-media:
   proxy-node-modules:
+  pgadmin-data:
