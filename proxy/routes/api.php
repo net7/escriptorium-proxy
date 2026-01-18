@@ -13,12 +13,12 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::group(['as' => 'escriptorium.', 'middleware' => 'api.key'], function (): void {
+Route::group(['prefix' => '/v1', 'as' => 'escriptorium.', 'middleware' => 'api.key'], function (): void {
     Route::get('/up', [eScriptoriumController::class, 'up'])->name('up');
 
     Route::group(['prefix' => '/models', 'as' => 'models.', 'middleware' => 'api.key:models'], function (): void {
         Route::get('/', [eScriptoriumController::class, 'models'])->name('list');
-        // Route::post('/', [eScriptoriumController::class, 'newModel'])->name('new');
+        // Route::post('/', [eScriptoriumController::class, 'newModel'])->name('new'); // DISABLED
     });
 
     Route::group(['prefix' => '/scripts', 'as' => 'scripts.', 'middleware' => 'api.key:scripts'], function (): void {
