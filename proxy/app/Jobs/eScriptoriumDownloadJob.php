@@ -172,11 +172,14 @@ class eScriptoriumDownloadJob implements ShouldQueue
             $this->deleteEscriptoriumProject();
 
             // ============================================================
-            // STEP 10: Marca la trascrizione come completata
+            // STEP 10: Completa questo step e dispatcha il job di processing
             // ============================================================
-            $this->transcription->update(['status' => eScriptoriumStatusEnum::Completed->value]);
+            $this->dataManager->completeStep(eScriptoriumServiceDataManager::STEP_DOWNLOAD);
 
-            Log::info('✅ [eScriptorium] Download completed successfully', [
+            // Dispatcha il job di processing TEI
+            dispatch(new eScriptoriumProcessTeiJob($this->transcription, $localPath));
+
+            Log::info('📤 [eScriptorium] Download completed, dispatching ProcessTeiJob', [
                 'transcription_id' => $this->transcription->id,
                 'local_path' => $localPath,
             ]);

@@ -60,6 +60,8 @@ class eScriptoriumServiceDataManager
 
     public const STEP_DOWNLOAD = 'download';
 
+    public const STEP_PROCESS = 'process';
+
     /**
      * Stati possibili per ogni step.
      */

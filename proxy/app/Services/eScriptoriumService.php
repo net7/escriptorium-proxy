@@ -788,137 +788,59 @@ class eScriptoriumService
     }
 
     /**
-     * Export transcription as TEI XML from eScriptorium.
-     *
-     * Uses the custom synchronous endpoint to get TEI XML content directly.
-     *
-     * @param  string  $documentId  The document pk
-     * @param  string  $transcriptionId  The eScriptorium transcription pk
-     * @return string The TEI XML content
-     *
-     * @throws \RuntimeException If export fails
-     */
-    public function exportTeiXml(string $documentId, string $transcriptionId): string
-    {
-        if (! $documentId || empty($documentId)) {
-            throw new \RuntimeException('eScriptorium TEI export failed: Document ID is required');
-        }
-
-        if (! $transcriptionId || empty($transcriptionId)) {
-            throw new \RuntimeException('eScriptorium TEI export failed: Transcription ID is required');
-        }
-
-        $endpoint = str_replace(
-            ['{document_id}', '{transcription_id}'],
-            [$documentId, $transcriptionId],
-            config('escriptorium.api.endpoints.tei_export')
-        );
-
-        $response = $this->client()->get($endpoint);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium TEI export failed: '.$response->body());
-        }
-
-        $teiXml = $response->json('tei_xml');
-
-        if (! $teiXml || empty($teiXml)) {
-            throw new \RuntimeException('eScriptorium TEI export failed: No TEI XML content in response');
-        }
-
-        // Handle multi-file response (when document has multiple pages)
-        // The response can be either a string or {'files': [...]} array
-        if (is_array($teiXml)) {
-            if (isset($teiXml['files']) && is_array($teiXml['files'])) {
-                // Combine all file contents into one TEI document
-                $contents = [];
-                $errors = [];
-                $filesCount = count($teiXml['files']);
-
-                foreach ($teiXml['files'] as $file) {
-                    if (isset($file['content']) && ! empty($file['content'])) {
-                        $contents[] = $file['content'];
-                    }
-                    if (isset($file['error'])) {
-                        $errors[] = ($file['filename'] ?? 'unknown').': '.$file['error'];
-                    }
-                }
-
-                // Merge the TEI contents properly with page breaks
-                $teiXml = $this->mergeTeiContents($contents);
-
-                // If no content but there are errors, include them in exception
-                if (empty($teiXml) && ! empty($errors)) {
-                    throw new \RuntimeException('eScriptorium TEI export failed: '.implode('; ', $errors));
-                }
-            } else {
-                // Unknown array format, convert to string
-                $teiXml = json_encode($teiXml);
-            }
-        }
-
-        // Handle string response with multiple concatenated TEI documents
-        // Split by XML declaration and merge if multiple documents found
-        if (is_string($teiXml) && substr_count($teiXml, '<?xml') > 1) {
-            // Split by XML declaration (keeping the declaration with each part)
-            $parts = preg_split('/(?=<\?xml)/', $teiXml, -1, PREG_SPLIT_NO_EMPTY);
-
-            if (count($parts) > 1) {
-                $teiXml = $this->mergeTeiContents($parts);
-            }
-        }
-
-        if (empty($teiXml)) {
-            throw new \RuntimeException('eScriptorium TEI export failed: No TEI XML content after processing');
-        }
-
-        return $teiXml;
-    }
-
-    /**
      * Merge multiple TEI XML contents into a single valid TEI document.
      *
      * Extracts body content from each TEI file, combines them with <pb/> page breaks,
      * and creates a single TEI document using the header from the first file.
+     * Preserves the original div/p structure from each page.
      *
-     * @param  array<string>  $contents  Array of TEI XML strings
+     * @param  array<string>  $contents  Array of TEI XML strings (already sorted by page number)
      * @return string Merged TEI XML document
      */
-    private function mergeTeiContents(array $contents): string
+    public function mergeTeiContents(array $contents): string
     {
         if (empty($contents)) {
             return '';
         }
 
-        // If single file, return as is
-        if (count($contents) === 1) {
-            return $contents[0];
-        }
-
         $firstHeader = null;
         $pageContents = [];
 
-        $pageNum = 1;
-        foreach ($contents as $content) {
+        foreach ($contents as $pageNum => $content) {
             // Extract header from first file only
             if ($firstHeader === null) {
-                if (preg_match('/<teiHeader[^>]*>.*?<\/teiHeader>/s', $content, $headerMatch)) {
-                    $firstHeader = $headerMatch[0];
+                if (preg_match('/<teiHeader[^>]*>(.+?)<\/teiHeader>/s', $content, $headerMatch)) {
+                    $firstHeader = '<teiHeader>'.$headerMatch[1].'</teiHeader>';
                 }
             }
 
-            // Extract body inner content (everything inside <body>...</body>)
-            if (preg_match('/<body[^>]*>(.*?)<\/body>/s', $content, $bodyMatch)) {
+            // Extract source URL from xenoData for facs attribute
+            $facsUrl = '';
+            if (preg_match('/SOURCE:\s*(\S+)/m', $content, $sourceMatch)) {
+                $facsUrl = trim($sourceMatch[1]);
+            }
+
+            // Extract the div content inside body (preserves structure)
+            // Pattern: <body>...<div>CONTENT</div>...</body>
+            if (preg_match('/<body[^>]*>\s*<div[^>]*>(.*?)<\/div>\s*<\/body>/s', $content, $bodyMatch)) {
+                $divInner = trim($bodyMatch[1]);
+
+                // Build page break with facs reference if available
+                $pbTag = $facsUrl
+                    ? sprintf('<pb n="%d" facs="%s"/>', $pageNum + 1, htmlspecialchars($facsUrl, ENT_XML1))
+                    : sprintf('<pb n="%d"/>', $pageNum + 1);
+
+                $pageContents[] = $pbTag."\n".$divInner;
+            } elseif (preg_match('/<body[^>]*>(.*?)<\/body>/s', $content, $bodyMatch)) {
+                // Fallback: extract body content without div wrapper
                 $bodyInner = trim($bodyMatch[1]);
-                // Add page break marker with page number
-                $pageContents[] = "<pb n=\"{$pageNum}\"/>\n{$bodyInner}";
-                $pageNum++;
+                $pbTag = sprintf('<pb n="%d"/>', $pageNum + 1);
+                $pageContents[] = $pbTag."\n".$bodyInner;
             }
         }
-        unset($pageNum);
 
         if (empty($pageContents)) {
-            // Fallback to simple join if extraction fails
+            // Fallback to simple concatenation if extraction fails
             return implode("\n\n", $contents);
         }
 
@@ -929,7 +851,7 @@ class eScriptoriumService
 <teiHeader>
     <fileDesc>
       <titleStmt>
-        <title>TEI Document</title>
+        <title>Merged TEI Document</title>
       </titleStmt>
       <publicationStmt>
         <p>Imported from eScriptorium</p>
@@ -942,7 +864,7 @@ class eScriptoriumService
 XML;
         }
 
-        // Build merged TEI document
+        // Build merged TEI document with proper indentation
         $mergedBody = implode("\n        ", $pageContents);
 
         return <<<XML
