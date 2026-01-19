@@ -30,7 +30,6 @@ use Knuckles\Scribe\Attributes\Response as ScribeResponse;
  */
 #[Group('eScriptorium API', 'API per la gestione delle trascrizioni OCR tramite eScriptorium')]
 #[Authenticated]
-#[Header('X-API-Key', 'your-api-key')]
 class eScriptoriumController extends Controller
 {
     /**
@@ -360,6 +359,42 @@ class eScriptoriumController extends Controller
 
         return response()->json([
             'id' => $transcription->id,
+            'status' => $transcription->status->getLabel(),
+        ]);
+    }
+
+    /**
+     * Get Transcription Content
+     *
+     * Recupera il contenuto di una trascrizione.
+     * Verifica che la trascrizione appartenga all'API key autenticata.
+     */
+    #[UrlParam('id', 'string', 'UUID of the transcription', required: true, example: '550e8400-e29b-41d4-a716-446655440000')]
+    #[ScribeResponse(['id' => '550e8400-e29b-41d4-a716-446655440000', 'text' => 'Transcription content', 'status' => 'COMPLETED'], status: 200, description: 'Transcription content')]
+    #[ScribeResponse(['message' => 'Transcription not found', 'status' => 404], status: 404, description: 'Transcription not found')]
+    #[ResponseField('id', description: 'UUID of the transcription')]
+    #[ResponseField('text', description: 'Text of the transcription')]
+    #[ResponseField('status', description: 'Status of the transcription')]
+    public function content(Request $request, string $id): JsonResponse
+    {
+        // Recupera l'API key autenticata dal middleware
+        $apiKey = $request->attributes->get('api_key');
+
+        // Cerca la trascrizione verificando che appartenga all'API key
+        $transcription = Transcription::where('id', $id)
+            ->where('api_key_id', $apiKey->id)
+            ->first();
+
+        if (! $transcription) {
+            return response()->json([
+                'message' => __('validation.escriptorium.content.not_found'),
+                'status' => 404,
+            ], 404);
+        }
+
+        return response()->json([
+            'id' => $transcription->id,
+            'text' => $transcription->text ?? '',
             'status' => $transcription->status->getLabel(),
         ]);
     }

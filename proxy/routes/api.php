@@ -32,4 +32,8 @@ Route::group(['prefix' => '/v1', 'as' => 'escriptorium.', 'middleware' => 'api.k
     Route::group(['prefix' => '/status', 'as' => 'status.', 'middleware' => 'api.key:status'], function (): void {
         Route::get('/{id}', [eScriptoriumController::class, 'status'])->name('status');
     });
+
+    Route::group(['prefix' => '/content', 'as' => 'content.', 'middleware' => 'api.key:content'], function (): void {
+        Route::get('/{id}', [eScriptoriumController::class, 'content'])->name('content');
+    });
 });
