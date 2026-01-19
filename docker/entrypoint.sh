@@ -57,6 +57,10 @@ if [ ! -L "public/storage" ]; then
     php artisan storage:link 2>/dev/null || true
 fi
 
+# Generate scribe documentation
+echo "📜 Generating Scribe API documentation..."
+php artisan scribe:generate
+
 # Clear and cache config for production/staging
 if [ "$APP_ENV" = "production" ] || [ "$APP_ENV" = "staging" ]; then
     echo "⚡ Caching configuration..."
