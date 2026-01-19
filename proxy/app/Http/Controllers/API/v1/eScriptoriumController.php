@@ -253,25 +253,28 @@ class eScriptoriumController extends Controller
     }
 
     /**
-     * Get Transcription Status
+     * Get Transcription Details
      *
-     * Recupera lo stato di avanzamento di una trascrizione.
+     * Recupera stato e contenuto di una trascrizione.
      *
-     * Stati possibili:
-     * - `Pending` - In attesa di elaborazione
-     * - `Importing` - Import immagini in corso
-     * - `Segmenting` - Segmentazione in corso
-     * - `Transcribing` - OCR in corso
-     * - `Downloading` - Download risultati in corso
-     * - `Processing` - Elaborazione finale
-     * - `Completed` - Trascrizione completata
-     * - `Failed` - Errore nel processo
+     * **Stati possibili:**
+     * - `PENDING` - In attesa di elaborazione
+     * - `IMPORTING` - Import immagini in corso
+     * - `SEGMENTING` - Segmentazione in corso
+     * - `TRANSCRIBING` - OCR in corso
+     * - `DOWNLOADING` - Download risultati in corso
+     * - `PROCESSING` - Elaborazione finale
+     * - `COMPLETED` - Trascrizione completata
+     * - `FAILED` - Errore nel processo
+     *
+     * > **Nota**: Il campo `text` contiene il risultato in formato TEI XML
+     * > e sarà valorizzato solo quando lo stato è `COMPLETED`.
      */
-    #[Endpoint(operationId: 'getStatus', title: 'Stato trascrizione')]
+    #[Endpoint(operationId: 'getProcess', title: 'Dettagli trascrizione')]
     #[PathParameter('id', description: 'UUID della trascrizione restituito da POST /v1/process', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
-    #[Response(200, description: 'Stato della trascrizione', type: 'array{id: string, status: string}')]
+    #[Response(200, description: 'Stato e contenuto della trascrizione', type: 'array{id: string, status: string, text: string}')]
     #[Response(404, description: 'Trascrizione non trovata', type: 'array{message: string, status: int}')]
-    public function status(Request $request, string $id): JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         $apiKey = $request->attributes->get('api_key');
 
@@ -289,43 +292,7 @@ class eScriptoriumController extends Controller
         return response()->json([
             'id' => $transcription->id,
             'status' => $transcription->status->getLabel(),
-        ]);
-    }
-
-    /**
-     * Get Transcription Content
-     *
-     * Recupera il contenuto testuale di una trascrizione completata.
-     *
-     * Il testo è restituito in formato TEI XML, uno standard
-     * internazionale per la codifica di testi umanistici.
-     *
-     * > **Nota**: Il campo `text` sarà vuoto se la trascrizione
-     * > non è ancora completata. Verificare prima lo `status`.
-     */
-    #[Endpoint(operationId: 'getContent', title: 'Contenuto trascrizione')]
-    #[PathParameter('id', description: 'UUID della trascrizione', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
-    #[Response(200, description: 'Contenuto della trascrizione in formato TEI', type: 'array{id: string, text: string, status: string}')]
-    #[Response(404, description: 'Trascrizione non trovata', type: 'array{message: string, status: int}')]
-    public function content(Request $request, string $id): JsonResponse
-    {
-        $apiKey = $request->attributes->get('api_key');
-
-        $transcription = Transcription::where('id', $id)
-            ->where('api_key_id', $apiKey->id)
-            ->first();
-
-        if (! $transcription) {
-            return response()->json([
-                'message' => __('validation.escriptorium.content.not_found'),
-                'status' => 404,
-            ], 404);
-        }
-
-        return response()->json([
-            'id' => $transcription->id,
             'text' => $transcription->text ?? '',
-            'status' => $transcription->status->getLabel(),
         ]);
     }
 }
