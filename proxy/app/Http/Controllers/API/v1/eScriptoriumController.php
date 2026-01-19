@@ -18,7 +18,6 @@ use Illuminate\Support\Number;
 use Illuminate\Support\Str;
 use Knuckles\Scribe\Attributes\Authenticated;
 use Knuckles\Scribe\Attributes\Group;
-use Knuckles\Scribe\Attributes\Header;
 use Knuckles\Scribe\Attributes\Response as ScribeResponse;
 
 /**

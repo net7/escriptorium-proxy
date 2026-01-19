@@ -70,7 +70,11 @@ class ValidateApiKey
 
         // Bind API key to request for later use
         $request->attributes->set('api_key', $apiKey);
-        $request->attributes->set('api_key_log', $log);
+
+        // Bind log to request for later use if logging is enabled
+        if (config('apikey.enable_logging')) {
+            $request->attributes->set('api_key_log', $log);
+        }
 
         // Execute the request
         $response = $next($request);
