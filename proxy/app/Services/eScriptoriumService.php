@@ -790,12 +790,16 @@ class eScriptoriumService
     /**
      * Merge multiple TEI XML contents into a single valid TEI document.
      *
-     * Extracts body content from each TEI file, combines them with <pb/> page breaks,
-     * and creates a single TEI document using the header from the first file.
-     * Preserves the original div/p structure from each page.
+     * Features:
+     * - Uses DOMDocument for robust XML parsing
+     * - Creates proper <facsimile> section with all page images
+     * - Adds merge metadata to header
+     * - Validates output XML
      *
      * @param  array<string>  $contents  Array of TEI XML strings (already sorted by page number)
      * @return string Merged TEI XML document
+     *
+     * @throws \RuntimeException If XML parsing or validation fails
      */
     public function mergeTeiContents(array $contents): string
     {
@@ -803,51 +807,130 @@ class eScriptoriumService
             return '';
         }
 
-        $firstHeader = null;
-        $pageContents = [];
+        $pageCount = count($contents);
+        $facsimileEntries = [];
+        $bodyContents = [];
+        $baseHeader = null;
 
         foreach ($contents as $pageNum => $content) {
-            // Extract header from first file only
-            if ($firstHeader === null) {
-                if (preg_match('/<teiHeader[^>]*>(.+?)<\/teiHeader>/s', $content, $headerMatch)) {
-                    $firstHeader = '<teiHeader>'.$headerMatch[1].'</teiHeader>';
+            $pageId = 'page'.($pageNum + 1);
+
+            // Parse XML with DOM
+            $dom = new \DOMDocument('1.0', 'UTF-8');
+            $dom->preserveWhiteSpace = false;
+
+            // Suppress warnings for malformed XML, handle gracefully
+            if (! @$dom->loadXML($content)) {
+                Log::warning('[TEI Merge] Failed to parse XML for page '.($pageNum + 1));
+
+                continue;
+            }
+
+            $xpath = new \DOMXPath($dom);
+            $xpath->registerNamespace('tei', 'http://www.tei-c.org/ns/1.0');
+
+            // Extract header from first file only (without xenoData)
+            if ($baseHeader === null) {
+                $headerNode = $xpath->query('//tei:teiHeader | //teiHeader')->item(0);
+                if ($headerNode) {
+                    // Clone and remove xenoData
+                    $headerClone = $headerNode->cloneNode(true);
+                    $xenoNodes = $headerClone->getElementsByTagName('xenoData');
+                    while ($xenoNodes->length > 0) {
+                        $xenoNodes->item(0)->parentNode->removeChild($xenoNodes->item(0));
+                    }
+                    $tempDom = new \DOMDocument('1.0', 'UTF-8');
+                    $tempDom->appendChild($tempDom->importNode($headerClone, true));
+                    $baseHeader = $tempDom->saveXML($tempDom->documentElement);
                 }
             }
 
-            // Extract source URL from xenoData for facs attribute
+            // Extract source URL from xenoData
             $facsUrl = '';
-            if (preg_match('/SOURCE:\s*(\S+)/m', $content, $sourceMatch)) {
-                $facsUrl = trim($sourceMatch[1]);
+            $xenoDataNodes = $xpath->query('//tei:xenoData | //xenoData');
+            if ($xenoDataNodes->length > 0) {
+                $xenoText = $xenoDataNodes->item(0)->textContent;
+                if (preg_match('/SOURCE:\s*(\S+)/m', $xenoText, $match)) {
+                    $facsUrl = trim($match[1]);
+                }
             }
 
-            // Extract the div content inside body (preserves structure)
-            // Pattern: <body>...<div>CONTENT</div>...</body>
-            if (preg_match('/<body[^>]*>\s*<div[^>]*>(.*?)<\/div>\s*<\/body>/s', $content, $bodyMatch)) {
-                $divInner = trim($bodyMatch[1]);
+            // Build facsimile entry
+            if ($facsUrl) {
+                $facsimileEntries[] = sprintf(
+                    '    <surface xml:id="%s"><graphic url="%s"/></surface>',
+                    $pageId,
+                    htmlspecialchars($facsUrl, ENT_XML1)
+                );
+            }
 
-                // Build page break with facs reference if available
+            // Extract body content
+            $bodyNodes = $xpath->query('//tei:body | //body');
+            if ($bodyNodes->length > 0) {
+                $bodyNode = $bodyNodes->item(0);
+                $bodyInnerHtml = '';
+                foreach ($bodyNode->childNodes as $child) {
+                    $bodyInnerHtml .= $dom->saveXML($child);
+                }
+
+                // Create page break with facsimile reference
                 $pbTag = $facsUrl
-                    ? sprintf('<pb n="%d" facs="%s"/>', $pageNum + 1, htmlspecialchars($facsUrl, ENT_XML1))
+                    ? sprintf('<pb n="%d" facs="#%s"/>', $pageNum + 1, $pageId)
                     : sprintf('<pb n="%d"/>', $pageNum + 1);
 
-                $pageContents[] = $pbTag."\n".$divInner;
-            } elseif (preg_match('/<body[^>]*>(.*?)<\/body>/s', $content, $bodyMatch)) {
-                // Fallback: extract body content without div wrapper
-                $bodyInner = trim($bodyMatch[1]);
-                $pbTag = sprintf('<pb n="%d"/>', $pageNum + 1);
-                $pageContents[] = $pbTag."\n".$bodyInner;
+                $bodyContents[] = $pbTag."\n".trim($bodyInnerHtml);
             }
         }
 
-        if (empty($pageContents)) {
-            // Fallback to simple concatenation if extraction fails
-            return implode("\n\n", $contents);
+        if (empty($bodyContents)) {
+            throw new \RuntimeException('TEI merge failed: no body content extracted');
         }
 
-        // Use default header if none found
-        if (! $firstHeader) {
-            $date = now()->toIso8601String();
-            $firstHeader = <<<XML
+        // Build default header if none found
+        if (! $baseHeader) {
+            $baseHeader = $this->buildDefaultTeiHeader();
+        }
+
+        // Inject merge metadata into header
+        $baseHeader = $this->injectMergeMetadata($baseHeader, $pageCount);
+
+        // Build facsimile section
+        $facsimileSection = '';
+        if (! empty($facsimileEntries)) {
+            $facsimileSection = "  <facsimile>\n".implode("\n", $facsimileEntries)."\n  </facsimile>\n";
+        }
+
+        // Build final document
+        $mergedBody = implode("\n        ", $bodyContents);
+
+        $teiDocument = <<<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  {$baseHeader}
+{$facsimileSection}  <text>
+    <body>
+      <div>
+        {$mergedBody}
+      </div>
+    </body>
+  </text>
+</TEI>
+XML;
+
+        // Validate output XML
+        $this->validateXml($teiDocument);
+
+        return $teiDocument;
+    }
+
+    /**
+     * Build a default TEI header when none is available.
+     */
+    private function buildDefaultTeiHeader(): string
+    {
+        $date = now()->toIso8601String();
+
+        return <<<XML
 <teiHeader>
     <fileDesc>
       <titleStmt>
@@ -862,23 +945,92 @@ class eScriptoriumService
     </fileDesc>
   </teiHeader>
 XML;
+    }
+
+    /**
+     * Inject merge metadata into the TEI header.
+     */
+    private function injectMergeMetadata(string $header, int $pageCount): string
+    {
+        $date = now()->toIso8601String();
+
+        $revisionDesc = <<<XML
+
+    <revisionDesc>
+      <change when="{$date}">
+        <p>Merged {$pageCount} pages from eScriptorium export</p>
+      </change>
+    </revisionDesc>
+XML;
+
+        // Insert before closing </teiHeader>
+        return preg_replace('/<\/teiHeader>/', $revisionDesc."\n  </teiHeader>", $header);
+    }
+
+    /**
+     * Validate that the XML document is well-formed.
+     *
+     * @throws \RuntimeException If XML is invalid
+     */
+    private function validateXml(string $xml): void
+    {
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+
+        // Use internal errors to get detailed error info
+        $previousErrorState = libxml_use_internal_errors(true);
+
+        $result = $dom->loadXML($xml);
+
+        if (! $result) {
+            $errors = libxml_get_errors();
+            libxml_clear_errors();
+            libxml_use_internal_errors($previousErrorState);
+
+            $errorMessages = array_map(fn ($e) => trim($e->message), $errors);
+            throw new \RuntimeException('TEI XML validation failed: '.implode('; ', $errorMessages));
         }
 
-        // Build merged TEI document with proper indentation
-        $mergedBody = implode("\n        ", $pageContents);
+        libxml_use_internal_errors($previousErrorState);
+    }
 
-        return <<<XML
-<?xml version='1.0' encoding='UTF-8'?>
-<TEI xmlns="http://www.tei-c.org/ns/1.0">
-  {$firstHeader}
-  <text>
-    <body>
-      <div>
-        {$mergedBody}
-      </div>
-    </body>
-  </text>
-</TEI>
-XML;
+    /**
+     * Extract plain text from TEI XML content.
+     *
+     * Removes all XML markup and returns only the text content,
+     * useful for full-text search indexing.
+     *
+     * @param  string  $teiXml  TEI XML document
+     * @return string Plain text content
+     */
+    public function extractPlainText(string $teiXml): string
+    {
+        if (empty($teiXml)) {
+            return '';
+        }
+
+        $dom = new \DOMDocument('1.0', 'UTF-8');
+
+        if (! @$dom->loadXML($teiXml)) {
+            // Fallback: strip tags if XML parsing fails
+            return strip_tags($teiXml);
+        }
+
+        $xpath = new \DOMXPath($dom);
+        $xpath->registerNamespace('tei', 'http://www.tei-c.org/ns/1.0');
+
+        // Get body text content
+        $bodyNodes = $xpath->query('//tei:body | //body');
+
+        if ($bodyNodes->length === 0) {
+            return '';
+        }
+
+        $text = $bodyNodes->item(0)->textContent;
+
+        // Normalize whitespace
+        $text = preg_replace('/\s+/', ' ', $text);
+        $text = trim($text);
+
+        return $text;
     }
 }
