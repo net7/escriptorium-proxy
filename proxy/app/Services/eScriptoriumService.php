@@ -425,6 +425,26 @@ class eScriptoriumService
     }
 
     /**
+     * Recupera un documento da eScriptorium.
+     *
+     * @param  string  $documentId  ID del documento (pk)
+     * @return array Dati del documento (pk, name, valid_block_types, etc.)
+     *
+     * @throws \RuntimeException Se la richiesta fallisce
+     */
+    public function getDocument(string $documentId): array
+    {
+        $endpoint = config('escriptorium.api.endpoints.documents').$documentId.'/';
+        $response = $this->client()->get($endpoint);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium get document request failed: '.$response->body());
+        }
+
+        return $response->json();
+    }
+
+    /**
      * Create a new document in eScriptorium within a project.
      *
      * @param  string  $name  The document name
@@ -755,13 +775,7 @@ class eScriptoriumService
         ];
 
         if (app()->isLocal()) {
-            Log::info('📤 [eScriptorium] Export document request', [
-                'document_id' => $documentId,
-                'transcription_id' => $transcriptionId,
-                'parts_pks' => $partsPks,
-                'format' => $format,
-                'region_types' => $payload['region_types'],
-            ]);
+            Log::info('📤 [eScriptorium] Export document payload', $payload);
         }
 
         $response = $this->client()->post($endpoint, $payload);

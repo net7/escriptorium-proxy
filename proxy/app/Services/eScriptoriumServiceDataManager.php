@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Facades\eScriptorium;
 use App\Models\Transcription;
 
 /**
@@ -152,6 +153,21 @@ class eScriptoriumServiceDataManager
         $pks = array_column($validBlockTypes, 'pk');
 
         return array_map('strval', $pks);
+    }
+
+    /**
+     * Aggiorna i dati del documento recuperandoli da eScriptorium.
+     *
+     * Utile per ottenere i valid_block_types aggiornati dopo segmentazione/transcription.
+     *
+     * @return array Dati aggiornati del documento
+     */
+    public function refreshDocument(): array
+    {
+        $document = eScriptorium::getDocument((string) $this->getDocumentId());
+        $this->update(['document' => $document]);
+
+        return $document;
     }
 
     /**

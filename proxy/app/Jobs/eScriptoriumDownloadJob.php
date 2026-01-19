@@ -82,6 +82,9 @@ class eScriptoriumDownloadJob implements ShouldQueue
         // ============================================================
         $documentId = $this->dataManager->getDocumentId();
         $transcriptionId = $this->dataManager->getTranscriptionId();
+
+        // Aggiorna i dati del documento per ottenere i valid_block_types aggiornati
+        $this->dataManager->refreshDocument();
         $documentValidRegionTypesIds = $this->dataManager->getDocumentValidRegionTypesIds();
 
         if (! $documentId) {
