@@ -15,6 +15,18 @@ class ProcessRequest extends FormRequest
         return true;
     }
 
+    /**
+     * Prepare the data for validation.
+     * Convert empty strings to null for nullable fields.
+     */
+    protected function prepareForValidation(): void
+    {
+        $this->merge([
+            'segmentation_model_id' => $this->segmentation_model_id === '' ? null : $this->segmentation_model_id,
+            'pages' => $this->pages === '' ? null : $this->pages,
+        ]);
+    }
+
     public function rules(): array
     {
         $scripts = eScriptorium::scripts();
