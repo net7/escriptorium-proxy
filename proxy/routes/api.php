@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::group(['prefix' => '/v1', 'as' => 'escriptorium.', 'middleware' => 'api.key'], function (): void {
-    Route::get('/up', [eScriptoriumController::class, 'up'])->name('up');
+    Route::get('/up', [eScriptoriumController::class, 'up'])->name('up')->middleware('api.key:up');
 
     Route::group(['prefix' => '/models', 'as' => 'models.', 'middleware' => 'api.key:models'], function (): void {
         Route::get('/', [eScriptoriumController::class, 'models'])->name('list');

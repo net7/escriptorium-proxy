@@ -10,7 +10,7 @@ use Symfony\Component\HttpFoundation\Response;
 
 class ValidateApiKey
 {
-    public const HEADER_NAME = 'X-API-Key';
+    public const string HEADER_NAME = 'X-API-Key';
 
     /**
      * Handle an incoming request.
