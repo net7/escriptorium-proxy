@@ -16,24 +16,32 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Number;
 use Illuminate\Support\Str;
+use Knuckles\Scribe\Attributes\Authenticated;
+use Knuckles\Scribe\Attributes\Group;
+use Knuckles\Scribe\Attributes\Header;
+use Knuckles\Scribe\Attributes\Response as ScribeResponse;
 
 /**
- * Controller per la gestione delle API di eScriptorium.
+ * @group eScriptorium API
  *
- * Questo controller espone endpoint per:
- * - Verificare lo stato del servizio eScriptorium
- * - Recuperare i modelli OCR disponibili
- * - Recuperare gli script disponibili
- * - Caricare nuovi modelli OCR
- * - Avviare il processo completo di trascrizione (import → segmentazione → OCR)
+ * API per la gestione delle trascrizioni OCR tramite eScriptorium.
+ *
+ * Tutte le API richiedono autenticazione tramite header `X-API-Key`.
  */
+#[Group('eScriptorium API', 'API per la gestione delle trascrizioni OCR tramite eScriptorium')]
+#[Authenticated]
+#[Header('X-API-Key', 'your-api-key')]
 class eScriptoriumController extends Controller
 {
     /**
+     * Health Check
+     *
      * Verifica se il servizio eScriptorium è attivo e raggiungibile.
      *
      * @return Response HTTP 200 se il servizio è attivo, HTTP 503 se non raggiungibile
      */
+    #[ScribeResponse(content: '', status: 200, description: 'Service is up')]
+    #[ScribeResponse(content: '', status: 503, description: 'Service is unavailable')]
     public function up(): Response
     {
         try {
@@ -49,16 +57,27 @@ class eScriptoriumController extends Controller
     }
 
     /**
+     * List OCR Models
+     *
      * Recupera l'elenco dei modelli OCR disponibili su eScriptorium.
-     *
-     * I modelli vengono formattati per includere:
-     * - id: identificativo del modello (pk)
-     * - name: nome del modello
-     * - accuracy_percent: percentuale di accuratezza (null se 0%)
-     * - job: tipo di modello ('segment' o 'recognize')
-     *
-     * @return JsonResponse Lista dei modelli con count e status
+     * I modelli includono informazioni su nome, accuratezza e tipo (segment/recognize).
      */
+    #[ScribeResponse([
+        'results' => [
+            ['id' => 1, 'name' => 'Generic HTR Model', 'accuracy_percent' => '95.2%', 'job' => 'recognize'],
+            ['id' => 2, 'name' => 'Segmentation Model', 'accuracy_percent' => null, 'job' => 'segment'],
+        ],
+        'count' => 2,
+        'status' => 200,
+    ], status: 200, description: 'List of available OCR models')]
+    #[ScribeResponse(['results' => [], 'status' => 500, 'message' => 'Error message'], status: 500, description: 'Error retrieving models')]
+    #[ResponseField('results', description: 'Array of OCR models')]
+    #[ResponseField('results[].id', description: 'Model identifier (pk)')]
+    #[ResponseField('results[].name', description: 'Model name')]
+    #[ResponseField('results[].accuracy_percent', description: 'Accuracy percentage (null if 0%)')]
+    #[ResponseField('results[].job', description: 'Model type: segment or recognize')]
+    #[ResponseField('count', description: 'Total number of models')]
+    #[ResponseField('status', description: 'HTTP status code')]
     public function models(): JsonResponse
     {
         try {
@@ -96,13 +115,26 @@ class eScriptoriumController extends Controller
     }
 
     /**
+     * List Scripts
+     *
      * Recupera l'elenco degli script (alfabeti/lingue) disponibili su eScriptorium.
-     *
-     * Gli script definiscono il sistema di scrittura del documento
-     * (es. Latin, Arabic, Hebrew, etc.)
-     *
-     * @return JsonResponse Lista degli script disponibili
+     * Gli script definiscono il sistema di scrittura del documento (es. Latin, Arabic, Hebrew, etc.)
      */
+    #[ScribeResponse([
+        'results' => [
+            ['pk' => 1, 'name' => 'Latin'],
+            ['pk' => 2, 'name' => 'Arabic'],
+            ['pk' => 3, 'name' => 'Hebrew'],
+        ],
+        'count' => 3,
+        'status' => 200,
+    ], status: 200, description: 'List of available scripts')]
+    #[ScribeResponse(['results' => [], 'status' => 500, 'message' => 'Error message'], status: 500, description: 'Error retrieving scripts')]
+    #[ResponseField('results', description: 'Array of available scripts')]
+    #[ResponseField('results[].pk', description: 'Script identifier')]
+    #[ResponseField('results[].name', description: 'Script name (e.g., Latin, Arabic, Hebrew)')]
+    #[ResponseField('count', description: 'Total number of scripts')]
+    #[ResponseField('status', description: 'HTTP status code')]
     public function scripts(): JsonResponse
     {
         try {
@@ -124,14 +156,18 @@ class eScriptoriumController extends Controller
     }
 
     /**
+     * Upload New Model
+     *
      * Carica un nuovo modello OCR su eScriptorium.
+     * Il processo tenta prima l'upload via browser, e in caso di fallimento ricade sull'upload diretto via API.
      *
-     * Il processo tenta prima l'upload via browser (che gestisce meglio il parsing
-     * dell'accuratezza), e in caso di fallimento ricade sull'upload diretto via API.
-     *
-     * @param  NewModelRequest  $request  Request validata con name e file
-     * @return Response|JsonResponse HTTP 201 se successo, HTTP 409 se modello esiste, HTTP 500 se errore
+     * @hideFromAPIDocumentation
      */
+    #[BodyParam('name', 'string', 'The name for the new model', required: true, example: 'My Custom HTR Model')]
+    #[BodyParam('file', 'file', 'The model file (.mlmodel)', required: true)]
+    #[ScribeResponse(content: '', status: 201, description: 'Model uploaded successfully')]
+    #[ScribeResponse(['message' => 'Model already exists', 'status' => 409], status: 409, description: 'Model with same name already exists')]
+    #[ScribeResponse(['message' => 'Upload failed', 'status' => 500, 'error' => 'Error details'], status: 500, description: 'Upload failed')]
     public function newModel(NewModelRequest $request): Response|JsonResponse
     {
         // Recupera tutti i modelli per verificare duplicati
@@ -173,18 +209,28 @@ class eScriptoriumController extends Controller
     }
 
     /**
+     * Start OCR Process
+     *
      * Avvia il processo completo di trascrizione OCR su eScriptorium.
      *
      * Il flusso completo è:
      * 1. Crea un progetto su eScriptorium
      * 2. Crea un documento nel progetto
      * 3. Crea una Transcription locale per tracciare il processo
-     * 4. Avvia il job di import che innesca la catena:
-     *    Import IIIF → Segmentazione → Creazione Trascrizione → OCR
-     *
-     * @param  ProcessRequest  $request  Request validata con tutti i parametri necessari
-     * @return JsonResponse ID della trascrizione creata e status
+     * 4. Avvia la catena di job: Import IIIF → Segmentazione → OCR → Download TEI
      */
+    #[BodyParam('script_name', 'string', 'The script (writing system) name', required: true, example: 'Latin')]
+    #[BodyParam('manifest_url', 'string', 'IIIF manifest URL to process', required: true, example: 'https://example.com/iiif/manifest.json')]
+    #[BodyParam('pages', 'string', 'Page range to process (e.g., "1-5,8,10-12")', required: false, example: '1-10')]
+    #[BodyParam('recognition_model_id', 'integer', 'ID of the OCR recognition model', required: true, example: 1)]
+    #[BodyParam('segmentation_model_id', 'integer', 'ID of the segmentation model (optional)', required: false, example: 2)]
+    #[BodyParam('text_direction', 'string', 'Text direction', required: true, enum: ['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl'], example: 'horizontal-lr')]
+    #[ScribeResponse(['message' => 'Process started successfully', 'transcription_id' => '550e8400-e29b-41d4-a716-446655440000', 'status' => 201], status: 201, description: 'Process started successfully')]
+    #[ScribeResponse(['message' => 'Validation failed', 'errors' => ['field' => ['Error message']], 'status' => 422], status: 422, description: 'Validation error')]
+    #[ScribeResponse(['message' => 'Process failed', 'error' => 'Error details', 'status' => 500], status: 500, description: 'Process failed')]
+    #[ResponseField('message', description: 'Status message')]
+    #[ResponseField('transcription_id', description: 'UUID of the created transcription (use for status polling)')]
+    #[ResponseField('status', description: 'HTTP status code')]
     public function process(ProcessRequest $request): JsonResponse
     {
         $data = $request->validated();
@@ -285,13 +331,16 @@ class eScriptoriumController extends Controller
     }
 
     /**
+     * Get Transcription Status
+     *
      * Recupera lo stato di una trascrizione.
-     *
      * Verifica che la trascrizione appartenga all'API key autenticata.
-     *
-     * @param  string  $id  UUID della trascrizione
-     * @return JsonResponse Stato della trascrizione
      */
+    #[UrlParam('id', 'string', 'UUID of the transcription', required: true, example: '550e8400-e29b-41d4-a716-446655440000')]
+    #[ScribeResponse(['id' => '550e8400-e29b-41d4-a716-446655440000', 'status' => 'Pending'], status: 200, description: 'Transcription status')]
+    #[ScribeResponse(['message' => 'Transcription not found', 'status' => 404], status: 404, description: 'Transcription not found')]
+    #[ResponseField('id', description: 'UUID of the transcription')]
+    #[ResponseField('status', description: 'Current status (Pending, Importing, Segmenting, Transcribing, Downloading, Processing, Completed, Failed)')]
     public function status(Request $request, string $id): JsonResponse
     {
         // Recupera l'API key autenticata dal middleware

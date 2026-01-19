@@ -18,10 +18,22 @@ return [
 
     // Text to place in the "Introduction" section, right after the `description`. Markdown and HTML are supported.
     'intro_text' => <<<'INTRO'
-        This documentation aims to provide all the information you need to work with our API.
+        Questa API funge da **proxy per eScriptorium**, semplificando il processo di trascrizione OCR dei manoscritti.
 
-        <aside>As you scroll, you'll see code examples for working with the API in different programming languages in the dark area to the right (or as part of the content on mobile).
-        You can switch the language used with the tabs at the top right (or from the nav menu at the top left on mobile).</aside>
+        ## Come funziona
+
+        1. **Invii una richiesta** con l'URL del manifest IIIF del documento da trascrivere
+        2. **Il sistema gestisce automaticamente** tutto il flusso su eScriptorium:
+           - Creazione del progetto e documento
+           - Import delle immagini dal manifest IIIF
+           - Segmentazione automatica delle pagine
+           - Riconoscimento OCR con il modello selezionato
+           - Download del risultato in formato TEI
+        3. **Monitori lo stato** tramite l'endpoint di status
+        4. **Ricevi la trascrizione** completata in formato TEI XML
+
+        <aside>Scorri per vedere esempi di codice in diversi linguaggi di programmazione nella sezione a destra.
+        Puoi cambiare linguaggio usando i tab in alto a destra.</aside>
     INTRO,
 
     // The base URL displayed in the docs.
@@ -55,10 +67,11 @@ return [
     // - "static" will generate a static HTMl page in the /public/docs folder,
     // - "laravel" will generate the documentation as a Blade view, so you can add routing and authentication.
     // - "external_static" and "external_laravel" do the same as above, but pass the OpenAPI spec as a URL to an external UI template
-    'type' => 'laravel',
+    'type' => 'external_laravel',
 
     // See https://scribe.knuckles.wtf/laravel/reference/config#theme for supported options
-    'theme' => 'default',
+    // For external types: scalar, elements, rapidoc
+    'theme' => 'scalar',
 
     'static' => [
         // HTML documentation, assets and Postman collection will be generated to this folder.
@@ -72,7 +85,7 @@ return [
 
         // URL path to use for the docs endpoint (if `add_routes` is true).
         // By default, `/docs` opens the HTML page, `/docs.postman` opens the Postman collection, and `/docs.openapi` the OpenAPI spec.
-        'docs_url' => '/',
+        'docs_url' => '/docs',
 
         // Directory within `public` in which to store CSS and JS assets.
         // By default, assets are stored in `public/vendor/scribe`.
@@ -84,7 +97,10 @@ return [
     ],
 
     'external' => [
-        'html_attributes' => [],
+        'html_attributes' => [
+            'darkMode' => 'true',
+            'theme' => 'dark',
+        ],
     ],
 
     'try_it_out' => [
@@ -105,17 +121,17 @@ return [
     // How is your API authenticated? This information will be used in the displayed docs, generated examples and response calls.
     'auth' => [
         // Set this to true if ANY endpoints in your API use authentication.
-        'enabled' => false,
+        'enabled' => true,
 
         // Set this to true if your API should be authenticated by default. If so, you must also set `enabled` (above) to true.
         // You can then use @unauthenticated or @authenticated on individual endpoints to change their status from the default.
-        'default' => false,
+        'default' => true,
 
         // Where is the auth value meant to be sent in a request?
-        'in' => AuthIn::BEARER->value,
+        'in' => AuthIn::HEADER->value,
 
         // The name of the auth parameter (e.g. token, key, apiKey) or header (e.g. Authorization, Api-Key).
-        'name' => 'key',
+        'name' => 'X-API-Key',
 
         // The value of the parameter to be used by Scribe to authenticate response calls.
         // This will NOT be included in the generated documentation. If empty, Scribe will use a random value.
@@ -123,10 +139,10 @@ return [
 
         // Placeholder your users will see for the auth parameter in the example requests.
         // Set this to null if you want Scribe to use a random value as placeholder instead.
-        'placeholder' => '{YOUR_AUTH_KEY}',
+        'placeholder' => '{YOUR_API_KEY}',
 
         // Any extra authentication-related info for your users. Markdown and HTML are supported.
-        'extra_info' => 'You can retrieve your token by visiting your dashboard and clicking <b>Generate API token</b>.',
+        'extra_info' => 'Puoi ottenere la tua API key contattando l\'amministratore del sistema. L\'API key deve essere inclusa in tutte le richieste nell\'header <code>X-API-Key</code>.',
     ],
 
     // Example requests for each endpoint will be shown in each of these languages.

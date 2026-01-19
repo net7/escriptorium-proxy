@@ -62,6 +62,39 @@ class ProcessRequest extends FormRequest
         ];
     }
 
+    /**
+     * Get the body parameters for Scribe documentation.
+     */
+    public function bodyParameters(): array
+    {
+        return [
+            'script_name' => [
+                'description' => 'The script (writing system) name for the document. Get available scripts from GET /v1/scripts.',
+                'example' => 'Latin',
+            ],
+            'manifest_url' => [
+                'description' => 'IIIF manifest URL of the document to process.',
+                'example' => 'https://example.com/iiif/manifest.json',
+            ],
+            'pages' => [
+                'description' => 'Optional page range to process. Supports ranges (e.g., "1-5") and individual pages (e.g., "1,3,5"). If omitted, processes first 10 pages.',
+                'example' => '1-10',
+            ],
+            'recognition_model_id' => [
+                'description' => 'ID of the OCR recognition model. Get available models from GET /v1/models (filter by job=recognize).',
+                'example' => 1,
+            ],
+            'segmentation_model_id' => [
+                'description' => 'Optional ID of the segmentation model. Get available models from GET /v1/models (filter by job=segment). If omitted, default segmentation is used.',
+                'example' => 2,
+            ],
+            'text_direction' => [
+                'description' => 'Text direction of the document.',
+                'example' => 'horizontal-lr',
+            ],
+        ];
+    }
+
     protected function failedValidation(Validator $validator): void
     {
         throw new HttpResponseException(response()->json([
