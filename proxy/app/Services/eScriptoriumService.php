@@ -8,6 +8,7 @@ use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class eScriptoriumService
@@ -734,20 +735,36 @@ class eScriptoriumService
             throw new \RuntimeException('eScriptorium export document request failed: Transcription ID is required');
         }
 
+        if (! $partsPks || empty($partsPks)) {
+            throw new \RuntimeException('eScriptorium export document request failed: Parts PKS are required');
+        }
+
         if (! $regionTypes || empty($regionTypes)) {
             throw new \RuntimeException('eScriptorium export document request failed: Region types are required');
         }
 
         $endpoint = str_replace('{document_id}', $documentId, config('escriptorium.api.endpoints.export'));
 
-        $response = $this->client()->post($endpoint, [
+        $payload = [
             'file_format' => $format,
             'include_characters' => false,
             'include_images' => false,
             'transcription' => $transcriptionId,
             'parts' => $partsPks,
-            'region_types' => ['Orphan', 'Undefined', ...$regionTypes],
-        ]);
+            'region_types' => [...$regionTypes, 'Undefined', 'Orphan'],
+        ];
+
+        if (app()->isLocal()) {
+            Log::info('📤 [eScriptorium] Export document request', [
+                'document_id' => $documentId,
+                'transcription_id' => $transcriptionId,
+                'parts_pks' => $partsPks,
+                'format' => $format,
+                'region_types' => $payload['region_types'],
+            ]);
+        }
+
+        $response = $this->client()->post($endpoint, $payload);
 
         if (! $response->successful()) {
             throw new \RuntimeException('eScriptorium export document request failed: '.$response->body());

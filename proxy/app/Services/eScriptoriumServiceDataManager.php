@@ -144,13 +144,14 @@ class eScriptoriumServiceDataManager
     /**
      * Recupera gli ID dei tipi di regione validi per il documento.
      *
-     * @return array ID dei tipi di regione validi
+     * @return array ID dei tipi di regione validi (come stringhe)
      */
     public function getDocumentValidRegionTypesIds(): array
     {
         $validBlockTypes = $this->getData()['document']['valid_block_types'] ?? [];
+        $pks = array_column($validBlockTypes, 'pk');
 
-        return array_column($validBlockTypes, 'pk') ?? [];
+        return array_map('strval', $pks);
     }
 
     /**
