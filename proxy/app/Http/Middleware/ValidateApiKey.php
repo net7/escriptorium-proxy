@@ -55,13 +55,15 @@ class ValidateApiKey
 
         RateLimiter::hit($rateLimitKey, 60); // Decay in 60 seconds
 
-        // Log the request
-        $log = $apiKey->logRequest(
-            $request->path(),
-            $request->method(),
-            $request->ip(),
-            $request->userAgent()
-        );
+        // Log the request if enabled
+        if (config('apikey.enable_logging')) {
+            $log = $apiKey->logRequest(
+                $request->path(),
+                $request->method(),
+                $request->ip(),
+                $request->userAgent()
+            );
+        }
 
         // Update last used timestamp
         $apiKey->recordUsage();
@@ -75,7 +77,11 @@ class ValidateApiKey
 
         // Record response metrics
         $responseTimeMs = (int) ((microtime(true) - $startTime) * 1000);
-        $log->recordResponse($response->getStatusCode(), $responseTimeMs);
+
+        // Log the response if enabled
+        if (config('apikey.enable_logging')) {
+            $log->recordResponse($response->getStatusCode(), $responseTimeMs);
+        }
 
         // Add rate limit headers
         $response->headers->set('X-RateLimit-Limit', (string) $maxAttempts);
