@@ -113,6 +113,21 @@ return [
             // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
         ],
 
+        'escriptorium' => [
+            'driver' => 'pgsql',
+            'url' => env('ESCRIPTORIUM_DB_URL'),
+            'host' => env('ESCRIPTORIUM_DB_HOST', 'postgres'),
+            'port' => env('ESCRIPTORIUM_DB_PORT', '5432'),
+            'database' => env('ESCRIPTORIUM_DB_DATABASE', 'escriptorium'),
+            'username' => env('ESCRIPTORIUM_DB_USERNAME', 'postgres'),
+            'password' => env('ESCRIPTORIUM_DB_PASSWORD', 'postgres'),
+            'charset' => env('ESCRIPTORIUM_DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            // 'encrypt' => env('DB_ENCRYPT', 'yes'),
+            // 'trust_server_certificate' => env('DB_TRUST_SERVER_CERTIFICATE', 'false'),
+        ],
+
     ],
 
     /*
