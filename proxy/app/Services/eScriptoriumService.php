@@ -102,9 +102,7 @@ class eScriptoriumService
         $csrfToken = $cookies->getCookieByName('csrftoken')?->getValue();
 
         if (! $csrfToken) {
-            // Prova a estrarre dall'HTML
-            preg_match('/name=["\']csrfmiddlewaretoken["\'][^>]*value=["\']([^"\']+)["\']/', $loginPageResponse->body(), $matches);
-            $csrfToken = $matches[1] ?? null;
+            $csrfToken = $this->getCSRFTokenFromPage($loginPageResponse->body());
         }
 
         if (! $csrfToken) {
@@ -134,6 +132,13 @@ class eScriptoriumService
         }
 
         return $sessionId;
+    }
+
+    private function getCSRFTokenFromPage(string $html): string
+    {
+        preg_match('/name=["\']csrfmiddlewaretoken["\'][^>]*value=["\']([^"\']+)/', $html, $matches);
+
+        return $matches[1] ?? null;
     }
 
     /**
