@@ -30,6 +30,11 @@ class AppServiceProvider extends ServiceProvider
                 $openApi->secure(
                     SecurityScheme::apiKey('header', 'X-API-Key')
                 );
+
+                // Customize Info
+                $openApi->info->title = 'eScriptorium Proxy API';
+                $openApi->info->version = 'v1';
+                $openApi->info->description = config('scramble.info.description');
             });
 
         // Allow access to API docs in all environments

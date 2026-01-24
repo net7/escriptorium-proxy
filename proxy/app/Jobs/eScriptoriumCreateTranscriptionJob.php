@@ -81,7 +81,8 @@ class eScriptoriumCreateTranscriptionJob implements ShouldQueue
             // ============================================================
             // STEP 3: Crea la trascrizione su eScriptorium
             // ============================================================
-            $response = eScriptorium::createTranscription($documentId, Str::random(16));
+            $transcriptionName = $this->dataManager->getTranscriptionName() ?? Str::random(16);
+            $response = eScriptorium::createTranscription($documentId, $transcriptionName);
 
             // ============================================================
             // STEP 4: Salva i dati della trascrizione eScriptorium

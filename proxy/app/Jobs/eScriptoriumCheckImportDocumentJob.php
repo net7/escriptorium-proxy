@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ProcessSourceEnum;
 use App\Facades\eScriptorium;
 use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
@@ -122,41 +123,105 @@ class eScriptoriumCheckImportDocumentJob implements ShouldQueue
         );
 
         // ============================================================
-        // STEP 4: Filtra i task di import
+        // STEP 4: Determina quali task monitorare in base alla sorgente
         // ============================================================
-        $importTasks = array_values(array_filter($tasks['results'], function ($result) use ($documentId) {
-            return $result['document'] === (int) $documentId
-                && $result['method'] === 'imports.tasks.document_import';
-        }));
+        $sourceType = $this->dataManager->getData()['request']['source_type'] ?? ProcessSourceEnum::Manifest->value;
 
-        if (empty($importTasks)) {
-            $this->handleError('Import tasks not found');
+        if ($sourceType === ProcessSourceEnum::Images->value) {
+            // Per le immagini caricate singolarmente, monitoriamo i task di conversione "convert"
+            // Cerchiamo task il cui metodo finisce con "convert" (es. core.tasks.convert)
+            $relevantTasks = array_values(array_filter($tasks['results'], function ($result) use ($documentId) {
+                return $result['document'] === (int) $documentId
+                    && str_ends_with($result['method'], 'convert');
+            }));
 
-            return;
-        }
+            if (empty($relevantTasks)) {
+                // Se non ci sono task di conversione, potrebbe essere che:
+                // 1. Sono stati cancellati (improbabile così presto)
+                // 2. Non sono ancora partiti (possibile se c'è lag)
+                // 3. L'upload è stato così veloce che non li vediamo? No, il task report dovrebbe restare.
 
-        // ============================================================
-        // STEP 5: Gestisci lo stato del workflow
-        // ============================================================
-        $workflowState = $importTasks[0]['workflow_state'] ?? null;
+                // Verifica se abbiamo parti. Se abbiamo parti e nessun task running, siamo ok.
+                // Per sicurezza, se siamo ai primi tentativi, aspettiamo ancora.
+                if ($this->pollingAttempt < 3) {
+                    $this->scheduleNextCheck();
 
-        switch ($workflowState) {
-            case 0: // Queued
-            case 1: // Running
-                $this->scheduleNextCheck();
-                break;
+                    return;
+                }
 
-            case 2: // Crashed
-            case 4: // Canceled
-                $this->handleTaskFailed($importTasks[0]['messages'] ?? 'Task failed or canceled');
-                break;
-
-            case 3: // Finished
+                // Se dopo 3 tentativi non vediamo task convert, assumiamo siano finiti o non necessari
+                // (es. immagini già supportate nativamente?)
+                Log::warning('⚠️ [eScriptorium] No convert tasks found for images. Assuming completion.');
                 $this->handleTaskCompleted();
-                break;
 
-            default:
-                $this->handleError("Unknown workflow state: {$workflowState}");
+                return;
+            }
+
+            // Controlliamo lo stato cumulativo
+            $hasRunning = false;
+            $hasFailed = false;
+            $failureMessages = [];
+
+            foreach ($relevantTasks as $task) {
+                $state = $task['workflow_state'];
+                if (in_array($state, [0, 1])) { // Queued, Running
+                    $hasRunning = true;
+                } elseif (in_array($state, [2, 4])) { // Crashed, Canceled
+                    $hasFailed = true;
+                    $failureMessages[] = $task['messages'] ?? 'Unknown error';
+                }
+            }
+
+            if ($hasFailed) {
+                // Se anche uno solo fallisce, consideriamo l'import fallito?
+                // O continuiamo con quelli buoni? Per ora fail fast.
+                $this->handleTaskFailed('Image conversion failed: '.implode('; ', array_unique($failureMessages)));
+
+                return;
+            }
+
+            if ($hasRunning) {
+                $this->scheduleNextCheck();
+
+                return;
+            }
+
+            // Se nessuno corre e nessuno è fallito, sono tutti finiti (3)
+            $this->handleTaskCompleted();
+
+        } else {
+            // Logica esistente per MANIFEST
+            $importTasks = array_values(array_filter($tasks['results'], function ($result) use ($documentId) {
+                return $result['document'] === (int) $documentId
+                    && $result['method'] === 'imports.tasks.document_import';
+            }));
+
+            if (empty($importTasks)) {
+                $this->handleError('Import tasks not found');
+
+                return;
+            }
+
+            $workflowState = $importTasks[0]['workflow_state'] ?? null;
+
+            switch ($workflowState) {
+                case 0: // Queued
+                case 1: // Running
+                    $this->scheduleNextCheck();
+                    break;
+
+                case 2: // Crashed
+                case 4: // Canceled
+                    $this->handleTaskFailed($importTasks[0]['messages'] ?? 'Task failed or canceled');
+                    break;
+
+                case 3: // Finished
+                    $this->handleTaskCompleted();
+                    break;
+
+                default:
+                    $this->handleError("Unknown workflow state: {$workflowState}");
+            }
         }
     }
 

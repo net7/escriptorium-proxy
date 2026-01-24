@@ -246,6 +246,16 @@ class eScriptoriumServiceDataManager
     }
 
     /**
+     * Recupera il nome della trascrizione dalla request.
+     *
+     * @return string|null Nome della trascrizione
+     */
+    public function getTranscriptionName(): ?string
+    {
+        return $this->getData()['transcription_name'] ?? null;
+    }
+
+    /**
      * Salva i PK delle parti da processare.
      *
      * @param  array  $partsPks  Array dei PK delle parti

@@ -18,10 +18,10 @@ return [
         'process' => [
             'validation_failed' => 'Validation failed',
             'request_failed' => 'Request failed',
-            'script_name' => [
-                'required' => 'The script name field is required.',
-                'string' => 'The script must be a string.',
-                'in' => 'The selected script name is invalid.',
+            'script_id' => [
+                'required' => 'The script ID field is required.',
+                'integer' => 'The script ID must be an integer.',
+                'in' => 'The selected script ID is invalid.',
             ],
             'pages' => [
                 'nullable' => 'The pages field is optional.',
@@ -29,8 +29,18 @@ return [
             ],
             'manifest_url' => [
                 'required' => 'The manifest URL field is required.',
+                'required_if' => 'The manifest URL is required when source type is manifest.',
                 'string' => 'The manifest URL must be a string.',
                 'url' => 'The manifest URL must be a valid URL.',
+            ],
+            'source_type' => [
+                'required' => 'The source type is required.',
+                'enum' => 'The source type must be "manifest" or "images".',
+            ],
+            'images' => [
+                'required_if' => 'You must upload at least one image when source type is "images".',
+                'array' => 'The images must be uploaded as an array.',
+                'min' => 'Please upload at least :min image.',
             ],
             'recognition_model_id' => [
                 'required' => 'The recognition model field is required.',
@@ -46,6 +56,18 @@ return [
                 'required' => 'The text direction field is required.',
                 'string' => 'The text direction must be a string.',
                 'in' => 'The text direction must be one of: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, or ttb.',
+            ],
+            'project_name' => [
+                'string' => 'The project name must be a string.',
+                'max' => 'The project name may not be greater than 255 characters.',
+            ],
+            'document_name' => [
+                'string' => 'The document name must be a string.',
+                'max' => 'The document name may not be greater than 255 characters.',
+            ],
+            'transcription_name' => [
+                'string' => 'The transcription name must be a string.',
+                'max' => 'The transcription name may not be greater than 255 characters.',
             ],
         ],
         'status' => [

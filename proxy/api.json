@@ -1,9 +1,9 @@
 {
     "openapi": "3.1.0",
     "info": {
-        "title": "eScriptorium Proxy",
-        "version": "1.0.0",
-        "description": "Questa API funge da **proxy per eScriptorium**, semplificando il processo di trascrizione OCR dei manoscritti.\n\n## Come funziona\n\n1. **Invii una richiesta** con l'URL del manifest IIIF del documento da trascrivere\n2. **Il sistema gestisce automaticamente** tutto il flusso su eScriptorium:\n   - Creazione del progetto e documento\n   - Import delle immagini dal manifest IIIF\n   - Segmentazione automatica delle pagine\n   - Riconoscimento OCR con il modello selezionato\n   - Download del risultato in formato TEI\n3. **Monitori lo stato** tramite l'endpoint di status\n4. **Ricevi la trascrizione** completata in formato TEI XML"
+        "title": "eScriptorium Proxy API",
+        "version": "v1",
+        "description": "# eScriptorium Proxy API \ud83d\ude80\n\nBenvenuto nella documentazione ufficiale. Questa API semplifica radicalmente l'interazione con eScriptorium, offrendo un'interfaccia **stateless** e **user-friendly** per la trascrizione automatica di manoscritti.\n\n---\n\n### \u2728 Caratteristiche Principali\n\n*   \ud83d\udd25 **Processo One-Shot**: Da Manifest IIIF a XML TEI in una singola chiamata.\n*   \ud83d\uddbc\ufe0f **Upload Diretto**: Supporto per caricamento immagini raw (JPEG, PNG).\n*   \ud83e\udde0 **Modelli AI**: Selezione dinamica dei modelli OCR e di segmentazione.\n*   \ud83d\udd12 **Dual Auth**: Supporto per API Key Proxy o API Key Escriptorium.\n*   \ud83d\udce6 **Polling Automatico**: Monitoraggio intelligente dei task asincroni.\n\n---\n\n### \ud83d\udee0 Workflow Tipico\n\n1.  **Avvio Processo**: `POST /v1/process` (con Manifest URL o Immagini)\n2.  **Monitoraggio**: `GET /v1/process/{id}` per seguire lo stato (Importing \u2192 Segmenting \u2192 Transcribing).\n3.  **Risultato**: Quando lo stato \u00e8 `COMPLETED`, ottieni il testo trascritto.\n\n---\n\n> _Powered by eScriptorium & Laravel_"
     },
     "servers": [
         {
@@ -13,7 +13,7 @@
     "tags": [
         {
             "name": "eScriptorium",
-            "description": "API per trascrizione OCR automatica di manoscritti. Supporta autenticazione con API key Laravel (progetto temporaneo) o token eScriptorium diretto (progetto persistente)."
+            "description": "API per trascrizione OCR automatica di manoscritti. Supporta autenticazione con API key Proxy o API key Escriptorium (progetto persistente)."
         }
     ],
     "security": [
@@ -25,14 +25,14 @@
         "/v1/up": {
             "get": {
                 "operationId": "healthCheck",
-                "description": "Verifica se il servizio eScriptorium \u00e8 attivo e raggiungibile.\nUtile per monitoraggio e health checks automatici.",
+                "description": "Verifica la disponibilit\u00e0 del servizio eScriptorium.\nRestituisce **204 No Content** se il servizio \u00e8 operativo, oppure **503 Service Unavailable** se non \u00e8 raggiungibile.",
                 "summary": "Verifica stato servizio",
                 "tags": [
                     "eScriptorium"
                 ],
                 "responses": {
                     "200": {
-                        "description": "Il servizio \u00e8 attivo e raggiungibile",
+                        "description": "",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -50,6 +50,16 @@
                                 }
                             }
                         }
+                    },
+                    "204": {
+                        "description": "Il servizio \u00e8 operativo (nessun contenuto)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -57,14 +67,14 @@
         "/v1/models": {
             "get": {
                 "operationId": "listModels",
-                "description": "Recupera l'elenco dei modelli OCR disponibili su eScriptorium.\nI modelli sono divisi in due categorie:\n- **segment**: modelli per la segmentazione automatica delle pagine\n- **recognize**: modelli per il riconoscimento OCR del testo\n\n> **Nota**: Con token eScriptorium diretto, i modelli restituiti sono quelli\n> visibili al tuo account. Con API key Laravel, sono i modelli dell'utente di servizio.",
+                "description": "Restituisce l'elenco dei modelli di segmentazione e riconoscimento disponibili per l'utente corrente.\n\n- **ID**: Identificativo univoco del modello (da usare in `recognition_model_id` o `segmentation_model_id`).\n- **Job**: Tipo di modello (`Segment` o `Recognize`).\n- **Accuracy**: Percentuale di accuratezza del modello (se disponibile).\n\n> **Nota**: Se autenticato con token eScriptorium diretto, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.",
                 "summary": "Elenco modelli OCR",
                 "tags": [
                     "eScriptorium"
                 ],
                 "responses": {
                     "200": {
-                        "description": "Elenco dei modelli disponibili",
+                        "description": "Elenco modelli recuperato con successo",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -116,7 +126,7 @@
                         }
                     },
                     "500": {
-                        "description": "Errore nel recupero dei modelli",
+                        "description": "Errore di comunicazione con eScriptorium",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -148,14 +158,14 @@
         "/v1/scripts": {
             "get": {
                 "operationId": "listScripts",
-                "description": "Recupera l'elenco delle tipologie di scrittura supportate.\nLo script viene usato per indicare il sistema di scrittura del documento\n(es. Latin, Arabic, Hebrew, Greek, etc.).\n\n> **Nota**: L'elenco degli script \u00e8 comune a tutti gli utenti eScriptorium.",
+                "description": "Restituisce l'elenco dei sistemi di scrittura (Script) supportati da eScriptorium.\n\nOgni script ha un **ID univoco** (`pk`) che deve essere utilizzato nel campo `script_id`\nquando si avvia un processo di trascrizione.",
                 "summary": "Elenco sistemi di scrittura",
                 "tags": [
                     "eScriptorium"
                 ],
                 "responses": {
                     "200": {
-                        "description": "Elenco degli script disponibili",
+                        "description": "Elenco script recuperato con successo",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -196,7 +206,7 @@
                         }
                     },
                     "500": {
-                        "description": "Errore nel recupero degli script",
+                        "description": "Errore di comunicazione con eScriptorium",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -228,39 +238,24 @@
         "/v1/process": {
             "post": {
                 "operationId": "startProcess",
-                "description": "Avvia il processo completo di trascrizione OCR.\n\nIl flusso automatico comprende:\n1. **Creazione progetto** - Crea un progetto su eScriptorium\n2. **Import IIIF** - Importa le immagini dal manifest IIIF\n3. **Segmentazione** - Identifica righe e regioni di testo\n4. **Riconoscimento OCR** - Trascrive il testo con il modello selezionato\n5. **Export TEI** - Genera il risultato in formato TEI XML\n\n## Comportamento in base al tipo di autenticazione\n\n| Tipo API Key | Progetto eScriptorium | Eliminazione |\n|--------------|----------------------|---------------|\n| Laravel API Key | Creato con utente di servizio | Eliminato automaticamente |\n| Token eScriptorium | Creato nel tuo account | **Persistente** |\n\nUsa l'endpoint `/v1/status/{id}` per monitorare lo stato.",
+                "description": "Avvia un processo completo di trascrizione asincrono.\n\nIl flusso di lavoro include:\n1. Creazione Progetto e Documento (nomi personalizzabili o casuali).\n2. Import immagini da Manifest IIIF.\n3. Segmentazione e Riconoscimento testo (OCR).\n4. Generazione output TEI XML.\n\n### Modalit\u00e0 di Input (`source_type`)\n**1. Manifest IIIF (`manifest`)**\nRichiede `manifest_url`. Importa le immagini da un server esterno.\n\n**2. Upload Immagini (`images`)**\nRichiede `images` (array di file).\n**Nota**: La richiesta deve essere `multipart/form-data`.\nInviare le immagini come array: `images[]=@file1.jpg`, `images[]=@file2.jpg`.\n\n### Parametri Opzionali\n\u00c8 possibile specificare nomi personalizzati per le entit\u00e0 create su eScriptorium:\n- `project_name`: Nome del progetto contenitore\n- `document_name`: Nome del documento\n- `transcription_name`: Nome del layer di trascrizione\n\n### Persistenza vs Temporaneo\n- **API Key Proxy**: Progetto temporaneo (eliminato a fine processo).\n- **API Key Escriptorium**: Progetto persistente nel tuo account (nomi utili per organizzazione).",
                 "summary": "Avvia trascrizione OCR",
                 "tags": [
                     "eScriptorium"
                 ],
                 "requestBody": {
+                    "required": true,
                     "content": {
-                        "application/json": {
+                        "multipart/form-data": {
                             "schema": {
-                                "allOf": [
-                                    {
-                                        "$ref": "#/components/schemas/ProcessRequest"
-                                    },
-                                    {
-                                        "type": "object",
-                                        "properties": {
-                                            "is_escriptorium_api_key": {
-                                                "type": "string",
-                                                "default": false
-                                            },
-                                            "escriptorium_token": {
-                                                "type": "string"
-                                            }
-                                        }
-                                    }
-                                ]
+                                "$ref": "#/components/schemas/ProcessRequest"
                             }
                         }
                     }
                 },
                 "responses": {
                     "500": {
-                        "description": "Errore interno",
+                        "description": "Errore interno del server",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -286,7 +281,7 @@
                         }
                     },
                     "201": {
-                        "description": "Processo avviato con successo",
+                        "description": "Processo avviato correttamente",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -312,7 +307,7 @@
                         }
                     },
                     "422": {
-                        "description": "Errore di validazione",
+                        "description": "Errore di validazione parametri",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -322,7 +317,13 @@
                                             "type": "string"
                                         },
                                         "errors": {
-                                            "type": "object"
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            }
                                         },
                                         "status": {
                                             "type": "integer"
@@ -343,7 +344,7 @@
         "/v1/process/{id}": {
             "get": {
                 "operationId": "getProcess",
-                "description": "Recupera stato e contenuto di una trascrizione.\n\n**Stati possibili:**\n- `PENDING` - In attesa di elaborazione\n- `IMPORTING` - Import immagini in corso\n- `SEGMENTING` - Segmentazione in corso\n- `TRANSCRIBING` - OCR in corso\n- `DOWNLOADING` - Download risultati in corso\n- `PROCESSING` - Elaborazione finale\n- `COMPLETED` - Trascrizione completata\n- `FAILED` - Errore nel processo\n\n> **Nota**: Puoi vedere solo le trascrizioni create con la stessa API key.\n> Il campo `text` contiene il risultato in formato TEI XML\n> e sar\u00e0 valorizzato solo quando lo stato \u00e8 `COMPLETED`.",
+                "description": "Recupera lo stato corrente e, se completato, il testo trascritto.\n\n### Stati (`status`):\n- `PENDING`: In coda.\n- `IMPORTING`: Importazione immagini in corso.\n- `SEGMENTING`: Analisi layout in corso.\n- `TRANSCRIBING`: Riconoscimento testo in corso.\n- `DOWNLOADING`: Recupero risultati da eScriptorium.\n- `PROCESSING`: Elaborazione finale.\n- `COMPLETED`: Completato con successo (campo `text` disponibile).\n- `FAILED`: Errore durante il processo.",
                 "summary": "Dettagli trascrizione",
                 "tags": [
                     "eScriptorium"
@@ -353,7 +354,7 @@
                         "name": "id",
                         "in": "path",
                         "required": true,
-                        "description": "UUID della trascrizione restituito da POST /v1/process",
+                        "description": "UUID della trascrizione",
                         "schema": {
                             "type": "string"
                         },
@@ -362,7 +363,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "Stato e contenuto della trascrizione",
+                        "description": "Dettagli trascrizione",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -388,7 +389,7 @@
                         }
                     },
                     "404": {
-                        "description": "Trascrizione non trovata",
+                        "description": "Trascrizione non trovata o non accessibile",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -424,6 +425,89 @@
         "schemas": {
             "ProcessRequest": {
                 "type": "object",
+                "properties": {
+                    "script_id": {
+                        "type": "integer"
+                    },
+                    "source_type": {
+                        "type": "string",
+                        "enum": [
+                            "manifest",
+                            "images"
+                        ]
+                    },
+                    "manifest_url": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "uri"
+                    },
+                    "pages": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "recognition_model_id": {
+                        "type": "integer"
+                    },
+                    "segmentation_model_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "text_direction": {
+                        "type": "string",
+                        "enum": [
+                            "horizontal-lr",
+                            "horizontal-rl",
+                            "vertical-lr",
+                            "vertical-rl"
+                        ]
+                    },
+                    "project_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "document_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "transcription_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "images": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "items": {
+                            "type": "string",
+                            "format": "binary",
+                            "contentMediaType": "application/octet-stream",
+                            "maxLength": 20480
+                        },
+                        "minItems": 1
+                    }
+                },
+                "required": [
+                    "script_id",
+                    "source_type",
+                    "recognition_model_id",
+                    "text_direction"
+                ],
                 "title": "ProcessRequest"
             }
         }

@@ -25,19 +25,31 @@ return [
          * Description rendered on the home page of the API documentation (`/docs/api`).
          */
         'description' => <<<'DESC'
-Questa API funge da **proxy per eScriptorium**, semplificando il processo di trascrizione OCR dei manoscritti.
+# eScriptorium Proxy API 🚀
 
-## Come funziona
+Benvenuto nella documentazione ufficiale. Questa API semplifica radicalmente l'interazione con eScriptorium, offrendo un'interfaccia **stateless** e **user-friendly** per la trascrizione automatica di manoscritti.
 
-1. **Invii una richiesta** con l'URL del manifest IIIF del documento da trascrivere
-2. **Il sistema gestisce automaticamente** tutto il flusso su eScriptorium:
-   - Creazione del progetto e documento
-   - Import delle immagini dal manifest IIIF
-   - Segmentazione automatica delle pagine
-   - Riconoscimento OCR con il modello selezionato
-   - Download del risultato in formato TEI
-3. **Monitori lo stato** tramite l'endpoint di status
-4. **Ricevi la trascrizione** completata in formato TEI XML
+---
+
+### ✨ Caratteristiche Principali
+
+*   🔥 **Processo One-Shot**: Da Manifest IIIF a XML TEI in una singola chiamata.
+*   🖼️ **Upload Diretto**: Supporto per caricamento immagini raw (JPEG, PNG).
+*   🧠 **Modelli AI**: Selezione dinamica dei modelli OCR e di segmentazione.
+*   🔒 **Dual Auth**: Supporto per API Key Proxy o API Key Escriptorium.
+*   📦 **Polling Automatico**: Monitoraggio intelligente dei task asincroni.
+
+---
+
+### 🛠 Workflow Tipico
+
+1.  **Avvio Processo**: `POST /v1/process` (con Manifest URL o Immagini)
+2.  **Monitoraggio**: `GET /v1/process/{id}` per seguire lo stato (Importing → Segmenting → Transcribing).
+3.  **Risultato**: Quando lo stato è `COMPLETED`, ottieni il testo trascritto.
+
+---
+
+> _Powered by eScriptorium & Laravel_
 DESC,
     ],
 

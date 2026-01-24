@@ -595,6 +595,44 @@ class eScriptoriumService
     }
 
     /**
+     * Upload an image as a new part of the document.
+     *
+     * @param  string  $documentId  The document pk
+     * @param  string|resource  $fileContent  The file content or stream
+     * @param  string  $filename  The filename
+     * @return array The created part data
+     *
+     * @throws \RuntimeException If required parameters are empty or upload fails
+     */
+    public function uploadPart(string $documentId, $fileContent, string $filename): array
+    {
+        if (! $documentId || empty($documentId)) {
+            throw new \RuntimeException('eScriptorium upload part request failed: Document ID is required');
+        }
+
+        if (empty($fileContent)) {
+            throw new \RuntimeException('eScriptorium upload part request failed: File content is empty');
+        }
+
+        $endpoint = str_replace('{document_id}', $documentId, config('escriptorium.api.endpoints.parts'));
+
+        $response = $this->client()
+            ->asMultipart()
+            ->attach(
+                'image',
+                $fileContent,
+                $filename
+            )
+            ->post($endpoint);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium upload part request failed: '.$response->body());
+        }
+
+        return $response->json();
+    }
+
+    /**
      * Start segmentation on a document.
      *
      * This is an ASYNCHRONOUS operation. Use tasks() to poll for completion.

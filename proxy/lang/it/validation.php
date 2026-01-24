@@ -18,10 +18,10 @@ return [
         'process' => [
             'validation_failed' => 'Validazione fallita',
             'request_failed' => 'Richiesta fallita',
-            'script_name' => [
-                'required' => 'Il campo script name è obbligatorio.',
-                'string' => 'Lo script deve essere una stringa.',
-                'in' => 'Lo script name selezionato non è valido.',
+            'script_id' => [
+                'required' => 'Il campo ID script è obbligatorio.',
+                'integer' => 'L\'ID script deve essere un numero intero.',
+                'in' => 'L\'ID script selezionato non è valido.',
             ],
             'pages' => [
                 'nullable' => 'Il campo pagine è opzionale.',
@@ -29,8 +29,18 @@ return [
             ],
             'manifest_url' => [
                 'required' => 'Il campo manifest URL è obbligatorio.',
+                'required_if' => 'L\'URL del manifest è richiesto quando si seleziona la modalità manifest.',
                 'string' => 'Il manifest URL deve essere una stringa.',
                 'url' => 'Il manifest URL deve essere un URL valido.',
+            ],
+            'source_type' => [
+                'required' => 'Il tipo di sorgente è obbligatorio.',
+                'enum' => 'Il tipo di sorgente deve essere "manifest" o "images".',
+            ],
+            'images' => [
+                'required_if' => 'È necessario caricare almeno un\'immagine quando si seleziona la modalità immagini.',
+                'array' => 'Le immagini devono essere inviate come array.',
+                'min' => 'Inviare almeno :min immagine.',
             ],
             'recognition_model_id' => [
                 'required' => 'Il campo modello di riconoscimento è obbligatorio.',
@@ -46,6 +56,18 @@ return [
                 'required' => 'Il campo direzione del testo è obbligatorio.',
                 'string' => 'La direzione del testo deve essere una stringa.',
                 'in' => 'La direzione del testo deve essere una tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl o ttb.',
+            ],
+            'project_name' => [
+                'string' => 'Il nome del progetto deve essere una stringa.',
+                'max' => 'Il nome del progetto non può superare i 255 caratteri.',
+            ],
+            'document_name' => [
+                'string' => 'Il nome del documento deve essere una stringa.',
+                'max' => 'Il nome del documento non può superare i 255 caratteri.',
+            ],
+            'transcription_name' => [
+                'string' => 'Il nome della trascrizione deve essere una stringa.',
+                'max' => 'Il nome della trascrizione non può superare i 255 caratteri.',
             ],
         ],
         'status' => [

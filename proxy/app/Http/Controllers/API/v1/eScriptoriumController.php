@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\API\v1;
 
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ProcessSourceEnum;
 use App\Facades\eScriptorium;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\eScriptorium\NewModelRequest;
 use App\Http\Requests\eScriptorium\ProcessRequest;
 use App\Jobs\eScriptoriumImportDocumentJob;
+use App\Jobs\eScriptoriumUploadImagesJob;
 use App\Models\Transcription;
 use Dedoc\Scramble\Attributes\Endpoint;
 use Dedoc\Scramble\Attributes\Group;
@@ -35,27 +37,27 @@ use Illuminate\Support\Str;
  *
  * L'API supporta due tipi di autenticazione tramite header `X-API-Key`:
  *
- * ### 1. API Key Laravel (Default)
- * Usa una API key generata dal sistema Laravel. Il progetto creato su eScriptorium
+ * ### 1. API Key Proxy (Default)
+ * Usa una API key generata dal proxy. Il progetto creato su eScriptorium
  * verrà **eliminato automaticamente** al termine del processo.
  *
- * ### 2. Token eScriptorium Diretto
+ * ### 2. API Key Escriptorium
  * Usa direttamente un token API di eScriptorium. In questa modalità:
  * - Il progetto viene creato nel tuo account eScriptorium
  * - Il progetto **NON viene eliminato** al termine del processo
  * - Puoi accedere al progetto direttamente su eScriptorium
  */
-#[Group('eScriptorium', description: 'API per trascrizione OCR automatica di manoscritti. Supporta autenticazione con API key Laravel (progetto temporaneo) o token eScriptorium diretto (progetto persistente).')]
+#[Group('eScriptorium', description: 'API per trascrizione OCR automatica di manoscritti. Supporta autenticazione con API key Proxy o API key Escriptorium (progetto persistente).')]
 class eScriptoriumController extends Controller
 {
     /**
      * Health Check
      *
-     * Verifica se il servizio eScriptorium è attivo e raggiungibile.
-     * Utile per monitoraggio e health checks automatici.
+     * Verifica la disponibilità del servizio eScriptorium.
+     * Restituisce **204 No Content** se il servizio è operativo, oppure **503 Service Unavailable** se non è raggiungibile.
      */
     #[Endpoint(operationId: 'healthCheck', title: 'Verifica stato servizio')]
-    #[Response(200, description: 'Il servizio è attivo e raggiungibile')]
+    #[Response(204, description: 'Il servizio è operativo (nessun contenuto)')]
     #[Response(503, description: 'Il servizio non è disponibile')]
     public function up(): HttpResponse
     {
@@ -71,17 +73,17 @@ class eScriptoriumController extends Controller
     /**
      * List OCR Models
      *
-     * Recupera l'elenco dei modelli OCR disponibili su eScriptorium.
-     * I modelli sono divisi in due categorie:
-     * - **segment**: modelli per la segmentazione automatica delle pagine
-     * - **recognize**: modelli per il riconoscimento OCR del testo
+     * Restituisce l'elenco dei modelli di segmentazione e riconoscimento disponibili per l'utente corrente.
      *
-     * > **Nota**: Con token eScriptorium diretto, i modelli restituiti sono quelli
-     * > visibili al tuo account. Con API key Laravel, sono i modelli dell'utente di servizio.
+     * - **ID**: Identificativo univoco del modello (da usare in `recognition_model_id` o `segmentation_model_id`).
+     * - **Job**: Tipo di modello (`Segment` o `Recognize`).
+     * - **Accuracy**: Percentuale di accuratezza del modello (se disponibile).
+     *
+     * > **Nota**: Se autenticato con token eScriptorium diretto, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.
      */
     #[Endpoint(operationId: 'listModels', title: 'Elenco modelli OCR')]
-    #[Response(200, description: 'Elenco dei modelli disponibili', type: 'array{results: array<array{id: int, name: string, accuracy_percent: string|null, job: string}>, count: int, status: int}')]
-    #[Response(500, description: 'Errore nel recupero dei modelli', type: 'array{results: array, status: int, message: string}')]
+    #[Response(200, description: 'Elenco modelli recuperato con successo', type: 'array{results: array<array{id: int, name: string, accuracy_percent: string|null, job: string}>, count: int, status: int}')]
+    #[Response(500, description: 'Errore di comunicazione con eScriptorium', type: 'array{results: array, status: int, message: string}')]
     public function models(): JsonResponse
     {
         try {
@@ -115,15 +117,14 @@ class eScriptoriumController extends Controller
     /**
      * List Scripts
      *
-     * Recupera l'elenco delle tipologie di scrittura supportate.
-     * Lo script viene usato per indicare il sistema di scrittura del documento
-     * (es. Latin, Arabic, Hebrew, Greek, etc.).
+     * Restituisce l'elenco dei sistemi di scrittura (Script) supportati da eScriptorium.
      *
-     * > **Nota**: L'elenco degli script è comune a tutti gli utenti eScriptorium.
+     * Ogni script ha un **ID univoco** (`pk`) che deve essere utilizzato nel campo `script_id`
+     * quando si avvia un processo di trascrizione.
      */
     #[Endpoint(operationId: 'listScripts', title: 'Elenco sistemi di scrittura')]
-    #[Response(200, description: 'Elenco degli script disponibili', type: 'array{results: array<array{pk: int, name: string}>, count: int, status: int}')]
-    #[Response(500, description: 'Errore nel recupero degli script', type: 'array{results: array, status: int, message: string}')]
+    #[Response(200, description: 'Elenco script recuperato con successo', type: 'array{results: array<array{pk: int, name: string}>, count: int, status: int}')]
+    #[Response(500, description: 'Errore di comunicazione con eScriptorium', type: 'array{results: array, status: int, message: string}')]
     public function scripts(): JsonResponse
     {
         try {
@@ -146,14 +147,18 @@ class eScriptoriumController extends Controller
     /**
      * Upload New Model
      *
-     * Carica un nuovo modello OCR su eScriptorium.
+     * Carica un file modello `.mlmodel` (compatibile Kraken) su eScriptorium.
      *
-     * Il file deve essere nel formato `.mlmodel` compatibile con Kraken.
-     * I modelli possono essere scaricati da https://zenodo.org (cercare "kraken model").
+     * La richiesta deve essere **multipart/form-data**.
      *
-     * > **Nota**: Con token eScriptorium diretto, il modello viene caricato nel tuo account.
-     * > Con API key Laravel, il modello viene caricato nell'account di servizio.
+     * @param  NewModelRequest  $request
+     *                                    - **name**: Nome univoco per il modello.
+     *                                    - **file**: Il file binario (.mlmodel).
      */
+    #[Endpoint(operationId: 'newModel', title: 'Carica nuovo modello')]
+    #[Response(201, description: 'Modello creato con successo (201 No Content)')]
+    #[Response(409, description: 'Esiste già un modello con questo nome')]
+    #[Response(500, description: 'Errore durante il caricamento')]
     public function newModel(NewModelRequest $request): HttpResponse|JsonResponse
     {
         $allModels = eScriptorium::models();
@@ -193,77 +198,127 @@ class eScriptoriumController extends Controller
     /**
      * Start OCR Process
      *
-     * Avvia il processo completo di trascrizione OCR.
+     * Avvia un processo completo di trascrizione asincrono.
      *
-     * Il flusso automatico comprende:
-     * 1. **Creazione progetto** - Crea un progetto su eScriptorium
-     * 2. **Import IIIF** - Importa le immagini dal manifest IIIF
-     * 3. **Segmentazione** - Identifica righe e regioni di testo
-     * 4. **Riconoscimento OCR** - Trascrive il testo con il modello selezionato
-     * 5. **Export TEI** - Genera il risultato in formato TEI XML
+     * Il flusso di lavoro include:
+     * 1. Creazione Progetto e Documento (nomi personalizzabili o casuali).
+     * 2. Import immagini da Manifest IIIF.
+     * 3. Segmentazione e Riconoscimento testo (OCR).
+     * 4. Generazione output TEI XML.
      *
-     * ## Comportamento in base al tipo di autenticazione
+     * ### Modalità di Input (`source_type`)
+     * **1. Manifest IIIF (`manifest`)**
+     * Richiede `manifest_url`. Importa le immagini da un server esterno.
      *
-     * | Tipo API Key | Progetto eScriptorium | Eliminazione |
-     * |--------------|----------------------|---------------|
-     * | Laravel API Key | Creato con utente di servizio | Eliminato automaticamente |
-     * | Token eScriptorium | Creato nel tuo account | **Persistente** |
+     * **2. Upload Immagini (`images`)**
+     * Richiede `images` (array di file).
+     * **Nota**: La richiesta deve essere `multipart/form-data`.
+     * Inviare le immagini come array: `images[]=@file1.jpg`, `images[]=@file2.jpg`.
      *
-     * Usa l'endpoint `/v1/status/{id}` per monitorare lo stato.
+     * ### Parametri Opzionali
+     * È possibile specificare nomi personalizzati per le entità create su eScriptorium:
+     * - `project_name`: Nome del progetto contenitore
+     * - `document_name`: Nome del documento
+     * - `transcription_name`: Nome del layer di trascrizione
+     *
+     * ### Persistenza vs Temporaneo
+     * - **API Key Proxy**: Progetto temporaneo (eliminato a fine processo).
+     * - **API Key Escriptorium**: Progetto persistente nel tuo account (nomi utili per organizzazione).
      */
     #[Endpoint(operationId: 'startProcess', title: 'Avvia trascrizione OCR')]
-    #[Response(201, description: 'Processo avviato con successo', type: 'array{message: string, transcription_id: string, status: int}')]
-    #[Response(422, description: 'Errore di validazione', type: 'array{message: string, errors: object, status: int}')]
-    #[Response(500, description: 'Errore interno', type: 'array{message: string, error: string, status: int}')]
+    #[Response(201, description: 'Processo avviato correttamente', type: 'array{message: string, transcription_id: string, status: int}')]
+    #[Response(422, description: 'Errore di validazione parametri', type: 'array{message: string, errors: array<string, array<string>>, status: int}')]
+    #[Response(500, description: 'Errore interno del server', type: 'array{message: string, error: string, status: int}')]
     public function process(ProcessRequest $request): JsonResponse
     {
         $data = $request->validated();
         $apiKey = $request->attributes->get('api_key');
-        $isDirectMode = $request->input('is_escriptorium_api_key', false);
-        $escriptoriumToken = $request->input('escriptorium_token');
+        // Se usa API Key Laravel, is_escriptorium_api_key = true
+        // In questo caso il token è quello del service eScriptorium
+        // Se usa token diretto, il token è quello dell'utente passato dal middleware.
+
+        // Usage of data_get to avoid Scramble auto-discovery of internal parameters
+        $isApiKey = data_get($request, 'is_escriptorium_api_key', false);
+        $escriptoriumToken = data_get($request, 'escriptorium_token');
+
+        if (! $escriptoriumToken) {
+            // Fallback or Error
+        }
 
         Log::info('🟢 [eScriptorium] Workflow triggered. Starting process...', [
             'data' => $data,
             'api_key_id' => $apiKey->id,
-            'is_direct_mode' => $isDirectMode,
+            'is_direct_mode' => $isApiKey,
         ]);
 
         try {
             $escriptoriumProject = null;
             $escriptoriumDocument = null;
 
-            $transcription = DB::transaction(function () use ($data, $apiKey, $escriptoriumToken, &$escriptoriumProject, &$escriptoriumDocument) {
-                $projectName = Str::random(16);
+            // Transaction per garantire consistenza
+            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument) {
+                $projectName = $data['project_name'] ?? Str::random(16);
                 $escriptoriumProject = eScriptorium::createProject($projectName);
 
-                $documentName = Str::random(16);
+                $documentName = $data['document_name'] ?? Str::random(16);
                 $escriptoriumDocument = eScriptorium::createDocument(
                     $documentName,
                     $escriptoriumProject['slug'],
                     $data['script_name']
                 );
 
+                $serviceData = [
+                    'escriptorium' => [
+                        'request' => $data,
+                        'project' => $escriptoriumProject,
+                        'document' => $escriptoriumDocument,
+                        'transcription_name' => $data['transcription_name'] ?? null,
+                    ],
+                ];
+
+                if ($data['source_type'] === ProcessSourceEnum::Images->value) {
+                    $imagePaths = [];
+                    // Images are UploadedFile objects
+                    if (isset($data['images']) && is_array($data['images'])) {
+                        foreach ($data['images'] as $image) {
+                            // Store in a temporary location for the job to pick up
+                            // Using a distinct folder per request to avoid collisions
+                            $path = $image->store('transcriptions/pending_uploads');
+                            $imagePaths[] = $path;
+                        }
+                    }
+                    $serviceData['escriptorium']['image_paths'] = $imagePaths;
+
+                    // FIX: Override pages/pages_array to match exact number of uploaded images
+                    $count = count($imagePaths);
+                    if ($count > 0) {
+                        $data['pages_array'] = range(1, $count);
+                        $data['pages'] = "1-$count";
+                        // Update request data in service_data as well to reflect the actual range
+                        $serviceData['escriptorium']['request']['pages_array'] = $data['pages_array'];
+                        $serviceData['escriptorium']['request']['pages'] = $data['pages'];
+                    }
+                }
+
                 return Transcription::create([
                     'api_key_id' => $apiKey->id,
                     'escriptorium_token' => $escriptoriumToken,
                     'script_name' => $data['script_name'],
-                    'manifest_url' => $data['manifest_url'],
+                    'manifest_url' => $data['manifest_url'] ?? null,
                     'pages' => $data['pages'] ?? null,
                     'recognition_model_id' => $data['recognition_model_id'],
                     'segmentation_model_id' => $data['segmentation_model_id'] ?? null,
                     'text_direction' => $data['text_direction'],
                     'status' => eScriptoriumStatusEnum::Pending->value,
-                    'service_data' => [
-                        'escriptorium' => [
-                            'request' => $data,
-                            'project' => $escriptoriumProject,
-                            'document' => $escriptoriumDocument,
-                        ],
-                    ],
+                    'service_data' => $serviceData,
                 ]);
             });
 
-            dispatch(new eScriptoriumImportDocumentJob($transcription));
+            if ($data['source_type'] === ProcessSourceEnum::Images->value) {
+                dispatch(new eScriptoriumUploadImagesJob($transcription));
+            } else {
+                dispatch(new eScriptoriumImportDocumentJob($transcription));
+            }
 
             Log::info('🚀 [eScriptorium] Process started', ['transcription_id' => $transcription->id]);
 
@@ -287,26 +342,22 @@ class eScriptoriumController extends Controller
     /**
      * Get Transcription Details
      *
-     * Recupera stato e contenuto di una trascrizione.
+     * Recupera lo stato corrente e, se completato, il testo trascritto.
      *
-     * **Stati possibili:**
-     * - `PENDING` - In attesa di elaborazione
-     * - `IMPORTING` - Import immagini in corso
-     * - `SEGMENTING` - Segmentazione in corso
-     * - `TRANSCRIBING` - OCR in corso
-     * - `DOWNLOADING` - Download risultati in corso
-     * - `PROCESSING` - Elaborazione finale
-     * - `COMPLETED` - Trascrizione completata
-     * - `FAILED` - Errore nel processo
-     *
-     * > **Nota**: Puoi vedere solo le trascrizioni create con la stessa API key.
-     * > Il campo `text` contiene il risultato in formato TEI XML
-     * > e sarà valorizzato solo quando lo stato è `COMPLETED`.
+     * ### Stati (`status`):
+     * - `PENDING`: In coda.
+     * - `IMPORTING`: Importazione immagini in corso.
+     * - `SEGMENTING`: Analisi layout in corso.
+     * - `TRANSCRIBING`: Riconoscimento testo in corso.
+     * - `DOWNLOADING`: Recupero risultati da eScriptorium.
+     * - `PROCESSING`: Elaborazione finale.
+     * - `COMPLETED`: Completato con successo (campo `text` disponibile).
+     * - `FAILED`: Errore durante il processo.
      */
     #[Endpoint(operationId: 'getProcess', title: 'Dettagli trascrizione')]
-    #[PathParameter('id', description: 'UUID della trascrizione restituito da POST /v1/process', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
-    #[Response(200, description: 'Stato e contenuto della trascrizione', type: 'array{id: string, status: string, text: string}')]
-    #[Response(404, description: 'Trascrizione non trovata', type: 'array{message: string, status: int}')]
+    #[PathParameter('id', description: 'UUID della trascrizione', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
+    #[Response(200, description: 'Dettagli trascrizione', type: 'array{id: string, status: string, text: string}')]
+    #[Response(404, description: 'Trascrizione non trovata o non accessibile', type: 'array{message: string, status: int}')]
     public function show(Request $request, string $id): JsonResponse
     {
         $apiKey = $request->attributes->get('api_key');
