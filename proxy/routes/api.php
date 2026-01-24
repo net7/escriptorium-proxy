@@ -26,7 +26,8 @@ Route::group(['prefix' => '/v1', 'as' => 'escriptorium.', 'middleware' => 'api.k
     });
 
     Route::group(['prefix' => '/process', 'as' => 'process.', 'middleware' => 'api.key:process'], function (): void {
-        Route::post('/', [eScriptoriumController::class, 'process'])->name('create');
+        Route::post('/manifest', [eScriptoriumController::class, 'processManifest'])->name('manifest');
+        Route::post('/images', [eScriptoriumController::class, 'processImages'])->name('images');
         Route::get('/{id}', [eScriptoriumController::class, 'show'])->name('show');
     });
 });

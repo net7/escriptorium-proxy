@@ -25,31 +25,80 @@ return [
          * Description rendered on the home page of the API documentation (`/docs/api`).
          */
         'description' => <<<'DESC'
-# eScriptorium Proxy API 🚀
+# eScriptorium Proxy API
 
-Benvenuto nella documentazione ufficiale. Questa API semplifica radicalmente l'interazione con eScriptorium, offrendo un'interfaccia **stateless** e **user-friendly** per la trascrizione automatica di manoscritti.
-
----
-
-### ✨ Caratteristiche Principali
-
-*   🔥 **Processo One-Shot**: Da Manifest IIIF a XML TEI in una singola chiamata.
-*   🖼️ **Upload Diretto**: Supporto per caricamento immagini raw (JPEG, PNG).
-*   🧠 **Modelli AI**: Selezione dinamica dei modelli OCR e di segmentazione.
-*   🔒 **Dual Auth**: Supporto per API Key Proxy o API Key Escriptorium.
-*   📦 **Polling Automatico**: Monitoraggio intelligente dei task asincroni.
+API RESTful per la trascrizione automatica OCR/HTR di manoscritti storici tramite [eScriptorium](https://escriptorium.fr/).
 
 ---
 
-### 🛠 Workflow Tipico
+## Caratteristiche
 
-1.  **Avvio Processo**: `POST /v1/process` (con Manifest URL o Immagini)
-2.  **Monitoraggio**: `GET /v1/process/{id}` per seguire lo stato (Importing → Segmenting → Transcribing).
-3.  **Risultato**: Quando lo stato è `COMPLETED`, ottieni il testo trascritto.
+| Feature | Descrizione |
+|---------|-------------|
+| **IIIF Support** | Importa documenti direttamente da Manifest IIIF |
+| **Upload Diretto** | Carica immagini raw (JPEG, PNG, TIFF) |
+| **Modelli AI** | Selezione dinamica di modelli OCR e segmentazione |
+| **Dual Auth** | API Key Proxy (temporaneo) o API Key eScriptorium (persistente) |
+| **Asincrono** | Pipeline non bloccante con polling dello stato |
 
 ---
 
-> _Powered by eScriptorium & Laravel_
+## Quick Start
+
+### 1. Ottieni Script e Modelli
+```bash
+GET /v1/scripts    # Lista sistemi di scrittura
+GET /v1/models     # Lista modelli OCR disponibili
+```
+
+### 2. Avvia Trascrizione
+```bash
+# Da Manifest IIIF
+POST /v1/process/manifest
+{
+  "script_id": 1,
+  "manifest_url": "https://example.com/iiif/manifest.json",
+  "recognition_model_id": 142,
+  "text_direction": "horizontal-lr"
+}
+
+# Da Upload Immagini
+POST /v1/process/images  (multipart/form-data)
+```
+
+### 3. Monitora e Recupera Risultato
+```bash
+GET /v1/process/{id}
+# Polling fino a status = "COMPLETED"
+```
+
+---
+
+## Stati del Processo
+
+| Stato | Descrizione |
+|-------|-------------|
+| `PENDING` | In coda di elaborazione |
+| `IMPORTING` | Download/upload immagini in corso |
+| `SEGMENTING` | Analisi layout delle pagine |
+| `TRANSCRIBING` | Riconoscimento testo OCR/HTR |
+| `DOWNLOADING` | Recupero risultati da eScriptorium |
+| `PROCESSING` | Elaborazione finale TEI |
+| `COMPLETED` | Testo disponibile nel campo `text` |
+| `FAILED` | Errore durante l'elaborazione |
+
+---
+
+## Autenticazione
+
+Tutte le richieste richiedono l'header `X-API-Key`.
+
+| Tipo | Comportamento |
+|------|---------------|
+| **API Key Proxy** | Progetti temporanei, auto-eliminati al termine dell'elaborazione |
+| **API Key eScriptorium** | Progetti persistenti **sul tuo account eScriptorium personale** |
+
+> **Nota**: Con API Key eScriptorium puoi accedere ai progetti creati direttamente dalla piattaforma eScriptorium, modificarli manualmente e riutilizzarli in future richieste.
 DESC,
     ],
 

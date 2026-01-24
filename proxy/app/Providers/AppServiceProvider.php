@@ -29,6 +29,20 @@ class AppServiceProvider extends ServiceProvider
                 // Set X-API-Key header as default security scheme
                 $openApi->secure(
                     SecurityScheme::apiKey('header', 'X-API-Key')
+                        ->setDescription(<<<'DESC'
+                        Chiave API per autenticazione. Supporta due modalità:
+
+                        **1. API Key Proxy** - Chiave generata dal sistema proxy
+                        - Progetti temporanei (auto-eliminati al termine dell'elaborazione)
+                        - Ideale per integrazioni automatiche e test
+                        - Non richiede un account eScriptorium
+
+                        **2. API Key eScriptorium** - Chiave personale dal tuo account eScriptorium
+                        - Progetti persistenti **sul tuo account eScriptorium personale**
+                        - Puoi accedere ai progetti direttamente da eScriptorium
+                        - Supporta riuso di progetti/documenti esistenti (Find or Create)
+                        - Ottieni la chiave da: eScriptorium → Profile → API Token
+                        DESC)
                 );
 
                 // Customize Info
