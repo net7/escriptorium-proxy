@@ -75,6 +75,9 @@ class eScriptoriumController extends Controller
      * I modelli sono divisi in due categorie:
      * - **segment**: modelli per la segmentazione automatica delle pagine
      * - **recognize**: modelli per il riconoscimento OCR del testo
+     *
+     * > **Nota**: Con token eScriptorium diretto, i modelli restituiti sono quelli
+     * > visibili al tuo account. Con API key Laravel, sono i modelli dell'utente di servizio.
      */
     #[Endpoint(operationId: 'listModels', title: 'Elenco modelli OCR')]
     #[Response(200, description: 'Elenco dei modelli disponibili', type: 'array{results: array<array{id: int, name: string, accuracy_percent: string|null, job: string}>, count: int, status: int}')]
@@ -112,11 +115,11 @@ class eScriptoriumController extends Controller
     /**
      * List Scripts
      *
-     * Recupera l'elenco degli script (sistemi di scrittura) disponibili.
-     * Esempi: Latin, Arabic, Hebrew, Greek, Cyrillic, etc.
+     * Recupera l'elenco delle tipologie di scrittura supportate.
+     * Lo script viene usato per indicare il sistema di scrittura del documento
+     * (es. Latin, Arabic, Hebrew, Greek, etc.).
      *
-     * Lo script definisce il sistema di scrittura del documento
-     * ed è necessario per configurare correttamente il processo OCR.
+     * > **Nota**: L'elenco degli script è comune a tutti gli utenti eScriptorium.
      */
     #[Endpoint(operationId: 'listScripts', title: 'Elenco sistemi di scrittura')]
     #[Response(200, description: 'Elenco degli script disponibili', type: 'array{results: array<array{pk: int, name: string}>, count: int, status: int}')]
@@ -145,7 +148,11 @@ class eScriptoriumController extends Controller
      *
      * Carica un nuovo modello OCR su eScriptorium.
      *
-     * @hideFromAPIDocumentation
+     * Il file deve essere nel formato `.mlmodel` compatibile con Kraken.
+     * I modelli possono essere scaricati da https://zenodo.org (cercare "kraken model").
+     *
+     * > **Nota**: Con token eScriptorium diretto, il modello viene caricato nel tuo account.
+     * > Con API key Laravel, il modello viene caricato nell'account di servizio.
      */
     public function newModel(NewModelRequest $request): HttpResponse|JsonResponse
     {
@@ -292,7 +299,8 @@ class eScriptoriumController extends Controller
      * - `COMPLETED` - Trascrizione completata
      * - `FAILED` - Errore nel processo
      *
-     * > **Nota**: Il campo `text` contiene il risultato in formato TEI XML
+     * > **Nota**: Puoi vedere solo le trascrizioni create con la stessa API key.
+     * > Il campo `text` contiene il risultato in formato TEI XML
      * > e sarà valorizzato solo quando lo stato è `COMPLETED`.
      */
     #[Endpoint(operationId: 'getProcess', title: 'Dettagli trascrizione')]

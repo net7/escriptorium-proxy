@@ -57,7 +57,7 @@
         "/v1/models": {
             "get": {
                 "operationId": "listModels",
-                "description": "Recupera l'elenco dei modelli OCR disponibili su eScriptorium.\nI modelli sono divisi in due categorie:\n- **segment**: modelli per la segmentazione automatica delle pagine\n- **recognize**: modelli per il riconoscimento OCR del testo",
+                "description": "Recupera l'elenco dei modelli OCR disponibili su eScriptorium.\nI modelli sono divisi in due categorie:\n- **segment**: modelli per la segmentazione automatica delle pagine\n- **recognize**: modelli per il riconoscimento OCR del testo\n\n> **Nota**: Con token eScriptorium diretto, i modelli restituiti sono quelli\n> visibili al tuo account. Con API key Laravel, sono i modelli dell'utente di servizio.",
                 "summary": "Elenco modelli OCR",
                 "tags": [
                     "eScriptorium"
@@ -148,7 +148,7 @@
         "/v1/scripts": {
             "get": {
                 "operationId": "listScripts",
-                "description": "Recupera l'elenco degli script (sistemi di scrittura) disponibili.\nEsempi: Latin, Arabic, Hebrew, Greek, Cyrillic, etc.\n\nLo script definisce il sistema di scrittura del documento\ned \u00e8 necessario per configurare correttamente il processo OCR.",
+                "description": "Recupera l'elenco delle tipologie di scrittura supportate.\nLo script viene usato per indicare il sistema di scrittura del documento\n(es. Latin, Arabic, Hebrew, Greek, etc.).\n\n> **Nota**: L'elenco degli script \u00e8 comune a tutti gli utenti eScriptorium.",
                 "summary": "Elenco sistemi di scrittura",
                 "tags": [
                     "eScriptorium"
@@ -343,7 +343,7 @@
         "/v1/process/{id}": {
             "get": {
                 "operationId": "getProcess",
-                "description": "Recupera stato e contenuto di una trascrizione.\n\n**Stati possibili:**\n- `PENDING` - In attesa di elaborazione\n- `IMPORTING` - Import immagini in corso\n- `SEGMENTING` - Segmentazione in corso\n- `TRANSCRIBING` - OCR in corso\n- `DOWNLOADING` - Download risultati in corso\n- `PROCESSING` - Elaborazione finale\n- `COMPLETED` - Trascrizione completata\n- `FAILED` - Errore nel processo\n\n> **Nota**: Il campo `text` contiene il risultato in formato TEI XML\n> e sar\u00e0 valorizzato solo quando lo stato \u00e8 `COMPLETED`.",
+                "description": "Recupera stato e contenuto di una trascrizione.\n\n**Stati possibili:**\n- `PENDING` - In attesa di elaborazione\n- `IMPORTING` - Import immagini in corso\n- `SEGMENTING` - Segmentazione in corso\n- `TRANSCRIBING` - OCR in corso\n- `DOWNLOADING` - Download risultati in corso\n- `PROCESSING` - Elaborazione finale\n- `COMPLETED` - Trascrizione completata\n- `FAILED` - Errore nel processo\n\n> **Nota**: Puoi vedere solo le trascrizioni create con la stessa API key.\n> Il campo `text` contiene il risultato in formato TEI XML\n> e sar\u00e0 valorizzato solo quando lo stato \u00e8 `COMPLETED`.",
                 "summary": "Dettagli trascrizione",
                 "tags": [
                     "eScriptorium"
