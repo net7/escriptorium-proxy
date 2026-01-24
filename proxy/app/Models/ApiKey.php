@@ -21,6 +21,8 @@ class ApiKey extends Model
         'last_used_at',
         'expires_at',
         'is_active',
+        'is_escriptorium_direct',
+        'escriptorium_user_id',
     ];
 
     protected function casts(): array
@@ -31,6 +33,8 @@ class ApiKey extends Model
             'last_used_at' => 'datetime',
             'expires_at' => 'datetime',
             'is_active' => 'boolean',
+            'is_escriptorium_direct' => 'boolean',
+            'escriptorium_user_id' => 'integer',
         ];
     }
 

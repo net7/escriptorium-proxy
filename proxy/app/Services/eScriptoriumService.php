@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contexts\ApiContext;
 use GuzzleHttp\Client;
 use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\PendingRequest;
@@ -80,11 +81,16 @@ class eScriptoriumService
     }
 
     /**
-     * Get the API token (public accessor for use in jobs).
+     * Get the current API token.
+     *
+     * Respects the ApiContext: uses direct token if in direct mode,
+     * otherwise uses the service account token.
      */
-    public function getTokenPublic(): string
+    public function getCurrentToken(): string
     {
-        return $this->getToken();
+        return ApiContext::isDirectMode()
+            ? ApiContext::getDirectToken()
+            : $this->getToken();
     }
 
     /**
@@ -198,8 +204,12 @@ class eScriptoriumService
 
     private function client(): PendingRequest
     {
+        $token = ApiContext::isDirectMode()
+            ? ApiContext::getDirectToken()
+            : $this->getToken();
+
         return Http::baseUrl($this->baseUrl)
-            ->withToken($this->getToken(), config('escriptorium.api.headers.token_header'));
+            ->withToken($token, config('escriptorium.api.headers.token_header'));
     }
 
     /**

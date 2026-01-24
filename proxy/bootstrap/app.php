@@ -16,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
 
+        // Append terminable middleware for cleanup
+        $middleware->append(\App\Http\Middleware\ResetApiContext::class);
+
         $middleware->alias([
             'api.key' => \App\Http\Middleware\ValidateApiKey::class,
         ]);

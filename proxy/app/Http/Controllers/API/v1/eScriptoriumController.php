@@ -30,8 +30,22 @@ use Illuminate\Support\Str;
  * - Avviare processi di trascrizione automatica
  * - Monitorare lo stato delle trascrizioni
  * - Recuperare i risultati in formato TEI
+ *
+ * ## Modalità di Autenticazione
+ *
+ * L'API supporta due tipi di autenticazione tramite header `X-API-Key`:
+ *
+ * ### 1. API Key Laravel (Default)
+ * Usa una API key generata dal sistema Laravel. Il progetto creato su eScriptorium
+ * verrà **eliminato automaticamente** al termine del processo.
+ *
+ * ### 2. Token eScriptorium Diretto
+ * Usa direttamente un token API di eScriptorium. In questa modalità:
+ * - Il progetto viene creato nel tuo account eScriptorium
+ * - Il progetto **NON viene eliminato** al termine del processo
+ * - Puoi accedere al progetto direttamente su eScriptorium
  */
-#[Group('eScriptorium', description: 'API per trascrizione OCR automatica di manoscritti. Tutte le richieste richiedono autenticazione tramite header `X-API-Key`.')]
+#[Group('eScriptorium', description: 'API per trascrizione OCR automatica di manoscritti. Supporta autenticazione con API key Laravel (progetto temporaneo) o token eScriptorium diretto (progetto persistente).')]
 class eScriptoriumController extends Controller
 {
     /**
@@ -181,6 +195,13 @@ class eScriptoriumController extends Controller
      * 4. **Riconoscimento OCR** - Trascrive il testo con il modello selezionato
      * 5. **Export TEI** - Genera il risultato in formato TEI XML
      *
+     * ## Comportamento in base al tipo di autenticazione
+     *
+     * | Tipo API Key | Progetto eScriptorium | Eliminazione |
+     * |--------------|----------------------|---------------|
+     * | Laravel API Key | Creato con utente di servizio | Eliminato automaticamente |
+     * | Token eScriptorium | Creato nel tuo account | **Persistente** |
+     *
      * Usa l'endpoint `/v1/status/{id}` per monitorare lo stato.
      */
     #[Endpoint(operationId: 'startProcess', title: 'Avvia trascrizione OCR')]
@@ -191,17 +212,20 @@ class eScriptoriumController extends Controller
     {
         $data = $request->validated();
         $apiKey = $request->attributes->get('api_key');
+        $isDirectMode = $request->input('is_escriptorium_api_key', false);
+        $escriptoriumToken = $request->input('escriptorium_token');
 
         Log::info('🟢 [eScriptorium] Workflow triggered. Starting process...', [
             'data' => $data,
             'api_key_id' => $apiKey->id,
+            'is_direct_mode' => $isDirectMode,
         ]);
 
         try {
             $escriptoriumProject = null;
             $escriptoriumDocument = null;
 
-            $transcription = DB::transaction(function () use ($data, $apiKey, &$escriptoriumProject, &$escriptoriumDocument) {
+            $transcription = DB::transaction(function () use ($data, $apiKey, $escriptoriumToken, &$escriptoriumProject, &$escriptoriumDocument) {
                 $projectName = Str::random(16);
                 $escriptoriumProject = eScriptorium::createProject($projectName);
 
@@ -214,6 +238,7 @@ class eScriptoriumController extends Controller
 
                 return Transcription::create([
                     'api_key_id' => $apiKey->id,
+                    'escriptorium_token' => $escriptoriumToken,
                     'script_name' => $data['script_name'],
                     'manifest_url' => $data['manifest_url'],
                     'pages' => $data['pages'] ?? null,

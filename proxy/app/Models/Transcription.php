@@ -14,6 +14,7 @@ class Transcription extends Model
 
     protected $fillable = [
         'api_key_id',
+        'escriptorium_token',
         'script_name',
         'manifest_url',
         'pages',

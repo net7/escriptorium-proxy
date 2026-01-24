@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -28,7 +29,7 @@ use Illuminate\Support\Str;
  */
 class eScriptoriumCreateTranscriptionJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, UsesEscriptoriumAuth;
 
     /**
      * Numero massimo di tentativi in caso di errore.
@@ -57,6 +58,8 @@ class eScriptoriumCreateTranscriptionJob implements ShouldQueue
      */
     public function handle(): void
     {
+        $this->setupEscriptoriumAuth($this->transcription);
+
         $this->dataManager = eScriptoriumServiceDataManager::for($this->transcription);
 
         // ============================================================
@@ -123,6 +126,8 @@ class eScriptoriumCreateTranscriptionJob implements ShouldQueue
      */
     public function failed(?\Throwable $exception): void
     {
+        $this->cleanupEscriptoriumAuth();
+
         Log::error('❌ [eScriptorium] Transcription layer permanently failed', [
             'transcription_id' => $this->transcription->id,
             'error' => $exception?->getMessage(),

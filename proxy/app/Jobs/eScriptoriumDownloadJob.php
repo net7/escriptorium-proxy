@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -35,7 +36,7 @@ use WebSocket\Client;
  */
 class eScriptoriumDownloadJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, UsesEscriptoriumAuth;
 
     /**
      * Numero massimo di tentativi in caso di errore.
@@ -69,6 +70,8 @@ class eScriptoriumDownloadJob implements ShouldQueue
      */
     public function handle(): void
     {
+        $this->setupEscriptoriumAuth($this->transcription);
+
         $this->dataManager = eScriptoriumServiceDataManager::for($this->transcription);
 
         // ============================================================
@@ -168,8 +171,15 @@ class eScriptoriumDownloadJob implements ShouldQueue
 
             // ============================================================
             // STEP 9: Elimina il progetto da eScriptorium
+            //         (solo in modalità servizio - NON eliminare con token diretto)
             // ============================================================
-            $this->deleteEscriptoriumProject();
+            if (! $this->isDirectMode()) {
+                $this->deleteEscriptoriumProject();
+            } else {
+                Log::info('ℹ️ [eScriptorium] Skipping project deletion (direct token mode)', [
+                    'transcription_id' => $this->transcription->id,
+                ]);
+            }
 
             // ============================================================
             // STEP 10: Completa questo step e dispatcha il job di processing
@@ -279,7 +289,7 @@ class eScriptoriumDownloadJob implements ShouldQueue
         $fullUrl = $baseUrl.$downloadUrl;
 
         $response = Http::withToken(
-            eScriptorium::getTokenPublic(),
+            eScriptorium::getCurrentToken(),
             config('escriptorium.api.headers.token_header')
         )->get($fullUrl);
 
@@ -339,6 +349,8 @@ class eScriptoriumDownloadJob implements ShouldQueue
      */
     public function failed(?\Throwable $exception): void
     {
+        $this->cleanupEscriptoriumAuth();
+
         Log::error('❌ [eScriptorium] Download permanently failed', [
             'transcription_id' => $this->transcription->id,
             'error' => $exception?->getMessage(),

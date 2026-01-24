@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Filesystem\Filesystem;
@@ -34,7 +35,7 @@ use ZipArchive;
  */
 class eScriptoriumProcessTeiJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, UsesEscriptoriumAuth;
 
     /**
      * Numero massimo di tentativi.
@@ -79,6 +80,8 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
      */
     public function handle(): void
     {
+        $this->setupEscriptoriumAuth($this->transcription);
+
         $this->dataManager = eScriptoriumServiceDataManager::for($this->transcription);
 
         $this->updateStatus(eScriptoriumStatusEnum::Processing);

@@ -4,6 +4,7 @@ namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
+use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -30,7 +31,7 @@ use Illuminate\Support\Facades\Log;
  */
 class eScriptoriumSegmentDocumentJob implements ShouldQueue
 {
-    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+    use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, UsesEscriptoriumAuth;
 
     /**
      * Numero massimo di tentativi in caso di errore.
@@ -61,6 +62,8 @@ class eScriptoriumSegmentDocumentJob implements ShouldQueue
      */
     public function handle(): void
     {
+        $this->setupEscriptoriumAuth($this->transcription);
+
         $this->dataManager = eScriptoriumServiceDataManager::for($this->transcription);
         // STEP 1: Aggiorna lo status
         // ============================================================
@@ -149,6 +152,8 @@ class eScriptoriumSegmentDocumentJob implements ShouldQueue
      */
     public function failed(?\Throwable $exception): void
     {
+        $this->cleanupEscriptoriumAuth();
+
         Log::error('❌ [eScriptorium] Segmentation permanently failed', [
             'transcription_id' => $this->transcription->id,
             'error' => $exception?->getMessage(),
