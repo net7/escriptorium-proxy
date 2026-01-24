@@ -73,13 +73,16 @@ class eScriptoriumController extends Controller
     /**
      * List OCR Models
      *
-     * Restituisce l'elenco dei modelli di segmentazione e riconoscimento disponibili per l'utente corrente.
+     * Restituisce l'elenco dei modelli di riconoscimento (OCR) e segmentazione (Layout) disponibili.
+     * È fondamentale scegliere il modello giusto per la fase corretta del processo.
      *
-     * - **ID**: Identificativo univoco del modello (da usare in `recognition_model_id` o `segmentation_model_id`).
-     * - **Job**: Tipo di modello (`Segment` o `Recognize`).
-     * - **Accuracy**: Percentuale di accuratezza del modello (se disponibile).
+     * ### Tipi di Job
+     * - **Segment**: Modelli per l'analisi del layout. Individuano righe, colonne e regioni di testo nell'immagine.
+     * - **Recognize**: Modelli per la trascrizione del testo (HTR/OCR). Trasformano le immagini delle righe in testo digitale.
      *
-     * > **Nota**: Se autenticato con API Key Escriptorium, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.
+     * ### Visibilità Modelli
+     * - **API Key Escriptorium**: Mostra i tuoi modelli privati + modelli condivisi.
+     * - **API Key Proxy**: Mostra solo i modelli globali/di servizio configurati nel sistema.
      */
     #[Endpoint(operationId: 'listModels', title: 'Elenco modelli OCR')]
     #[Response(200, description: 'Elenco modelli recuperato con successo', type: 'array{results: array<array{id: int, name: string, accuracy_percent: string|null, job: string}>, count: int, status: int}')]
@@ -147,13 +150,16 @@ class eScriptoriumController extends Controller
     /**
      * Upload New Model
      *
-     * Carica un file modello `.mlmodel` (compatibile Kraken) su eScriptorium.
+     * Carica un nuovo modello OCR personalizzato su eScriptorium.
+     * Supporta file formato `.mlmodel` (compatibile con motore Kraken).
      *
-     * La richiesta deve essere **multipart/form-data**.
+     * ### Requisiti
+     * - **File**: Deve essere un file binario valido `.mlmodel`.
+     * - **Nome**: Deve essere univoco nel tuo account. Se esiste già, riceverai un errore `409 Conflict`.
      *
-     * @param  NewModelRequest  $request
-     *                                    - **name**: Nome univoco per il modello.
-     *                                    - **file**: Il file binario (.mlmodel).
+     * ### Nota Tecnica
+     * L'upload avviene in due step: verifica preliminare e caricamento effettivo. Il sistema tenterà di usare
+     * una simulazione browser se l'API standard non supporta certe feature (es. parsing accuracy).
      */
     #[Endpoint(operationId: 'newModel', title: 'Carica nuovo modello')]
     #[Response(201, description: 'Modello creato con successo (201 No Content)')]
@@ -201,29 +207,35 @@ class eScriptoriumController extends Controller
      * Avvia un processo completo di trascrizione asincrono.
      *
      * Il flusso di lavoro include:
-     * 1. Creazione Progetto e Documento (nomi personalizzabili o casuali).
-     * 2. Import immagini da Manifest IIIF.
-     * 3. Segmentazione e Riconoscimento testo (OCR).
-     * 4. Generazione output TEI XML.
+     * 1. **Setup**: Creazione (o riuso) di Progetto e Documento su eScriptorium.
+     * 2. **Import**: Acquisizione immagini (da Manifest IIIF o Upload diretto).
+     * 3. **Segmentation**: Analisi del layout (individuazione righe e regioni).
+     * 4. **Recognition**: Trascrizione del testo (OCR/HTR) usando il modello specificato.
+     * 5. **Export**: Generazione output TEI XML e estrazione testo puro.
+     *
+     * ### Autenticazione e Persistenza
+     * Il comportamento cambia in base al tipo di chiave API utilizzata:
+     * - **API Key Proxy** (Default):
+     *    - Crea progetti **temporanei**.
+     *    - I dati vengono eliminati da eScriptorium al termine (successo o fallimento).
+     *    - Non permette il riuso di progetti esistenti.
+     * - **API Key Escriptorium** (Personale):
+     *    - Crea progetti **persistenti** nel tuo account.
+     *    - Supporta la logica **Find or Create**: se `project_name` o `document_name` corrispondono a entità esistenti, vengono riutilizzate.
      *
      * ### Modalità di Input (`source_type`)
-     * **1. Manifest IIIF (`manifest`)**
-     * Richiede `manifest_url`. Importa le immagini da un server esterno.
+     * - **Manifest IIIF (`manifest`)**:
+     *    - Scarica le immagini da un server IIIF esterno.
+     *    - Supporta il filtro pagine tramite parametro `pages`.
+     * - **Upload Immagini (`images`)**:
+     *    - Richiede caricamento file raw via `multipart/form-data`.
+     *    - Elabora automaticamente **tutte** le immagini caricate (ignora `pages`).
+     *    - Limite dimensione: 20MB per file.
      *
-     * **2. Upload Immagini (`images`)**
-     * Richiede `images` (array di file).
-     * **Nota**: La richiesta deve essere `multipart/form-data`.
-     * Inviare le immagini come array: `images[]=@file1.jpg`, `images[]=@file2.jpg`.
-     *
-     * ### Parametri Opzionali
-     * È possibile specificare nomi personalizzati per le entità create su eScriptorium:
-     * - `project_name`: Nome del progetto contenitore
-     * - `document_name`: Nome del documento
-     * - `transcription_name`: Nome del layer di trascrizione
-     *
-     * ### Persistenza vs Temporaneo
-     * - **API Key Proxy**: Progetto temporaneo (eliminato a fine processo).
-     * - **API Key Escriptorium**: Progetto persistente nel tuo account (nomi utili per organizzazione).
+     * ### Parametri Chiave
+     * - `script_id`: Fondamentale per indicare la lingua/scrittura (ottiene da `/v1/scripts`).
+     * - `recognition_model_id`: Il "cervello" che legge il testo (ottiene da `/v1/models`).
+     * - `segmentation_model_id`: Opzionale, per layout complessi.
      */
     #[Endpoint(operationId: 'startProcess', title: 'Avvia trascrizione OCR')]
     #[Response(201, description: 'Processo avviato correttamente', type: 'array{message: string, transcription_id: string, status: int}')]
@@ -256,16 +268,48 @@ class eScriptoriumController extends Controller
             $escriptoriumDocument = null;
 
             // Transaction per garantire consistenza
-            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument) {
-                $projectName = $data['project_name'] ?? Str::random(16);
-                $escriptoriumProject = eScriptorium::createProject($projectName);
+            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument, $isApiKey) {
+                // REUSE LOGIC: Check for existing Project and Document if using persistent auth
+                $projectName = $data['project_name'] ?? null;
+                $documentName = $data['document_name'] ?? null;
 
-                $documentName = $data['document_name'] ?? Str::random(16);
-                $escriptoriumDocument = eScriptorium::createDocument(
-                    $documentName,
-                    $escriptoriumProject['slug'],
-                    $data['script_name']
-                );
+                // 1. PROJECT HANDLING
+                // If using persistent Escriptorium Auth and a specific project name is provided, try to find it
+                if ($isApiKey && $projectName) {
+                    $existingProjects = eScriptorium::getProjects($projectName);
+                    if (! empty($existingProjects)) {
+                        // Use the first match
+                        $escriptoriumProject = $existingProjects[0];
+                        Log::info("♻️ [eScriptorium] Reusing existing project: {$projectName} (PK: {$escriptoriumProject['pk']})");
+                    }
+                }
+
+                // Create if not found or not reusing
+                if (! $escriptoriumProject) {
+                    $projectName = $projectName ?? Str::random(16);
+                    $escriptoriumProject = eScriptorium::createProject($projectName);
+                    Log::info("✨ [eScriptorium] Created new project: {$projectName}");
+                }
+
+                // 2. DOCUMENT HANDLING
+                // If reusing project (and persistent auth), check for document reuse
+                if ($isApiKey && $documentName && isset($escriptoriumProject['pk'])) {
+                    $existingDocs = eScriptorium::getDocuments($escriptoriumProject['pk'], $documentName);
+                    if (! empty($existingDocs)) {
+                        $escriptoriumDocument = $existingDocs[0];
+                        Log::info("♻️ [eScriptorium] Reusing existing document: {$documentName} (PK: {$escriptoriumDocument['pk']})");
+                    }
+                }
+
+                if (! $escriptoriumDocument) {
+                    $documentName = $documentName ?? Str::random(16);
+                    $escriptoriumDocument = eScriptorium::createDocument(
+                        $documentName,
+                        $escriptoriumProject['slug'],
+                        $data['script_name']
+                    );
+                    Log::info("✨ [eScriptorium] Created new document: {$documentName}");
+                }
 
                 $serviceData = [
                     'escriptorium' => [
@@ -342,17 +386,22 @@ class eScriptoriumController extends Controller
     /**
      * Get Transcription Details
      *
-     * Recupera lo stato corrente e, se completato, il testo trascritto.
+     * Recupera lo stato di avanzamento e il risultato finale di una trascrizione.
      *
-     * ### Stati (`status`):
-     * - `PENDING`: In coda.
-     * - `IMPORTING`: Importazione immagini in corso.
-     * - `SEGMENTING`: Analisi layout in corso.
-     * - `TRANSCRIBING`: Riconoscimento testo in corso.
-     * - `DOWNLOADING`: Recupero risultati da eScriptorium.
-     * - `PROCESSING`: Elaborazione finale.
-     * - `COMPLETED`: Completato con successo (campo `text` disponibile).
-     * - `FAILED`: Errore durante il processo.
+     * ### Ciclo di Vita (`status`)
+     * 1. **PENDING**: La richiesta è stata accettata ed è in coda di elaborazione.
+     * 2. **IMPORTING**: È in corso il download delle immagini (da Manifest) o l'elaborazione dell'upload.
+     * 3. **SEGMENTING**: Il modello di segmentazione sta analizzando il layout delle pagine.
+     * 4. **TRANSCRIBING**: Il modello di riconoscimento sta leggendo il testo riga per riga.
+     * 5. **DOWNLOADING**: Il proxy sta recuperando i risultati XML/TEI da eScriptorium.
+     * 6. **PROCESSING**: Elaborazione finale, pulizia e formattazione del testo.
+     * 7. **COMPLETED**: Processo terminato con successo. Il campo `text` contiene il risultato.
+     *
+     * ### Stati di Errore
+     * - **FAILED**: Si è verificato un errore critico (es. file corrotto, timeout, errore server remoto).
+     *
+     * ### Output
+     * Quando lo stato è `COMPLETED`, il campo `text` conterrà il testo piano estratto dal TEI.
      */
     #[Endpoint(operationId: 'getProcess', title: 'Dettagli trascrizione')]
     #[PathParameter('id', description: 'UUID della trascrizione', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]

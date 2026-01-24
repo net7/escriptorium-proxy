@@ -1086,4 +1086,63 @@ XML;
 
         return $text;
     }
+
+    /**
+     * Get a list of projects, optionally filtered by name.
+     *
+     * @param  string|null  $name  Project name to search for
+     * @return array List of projects
+     */
+    public function getProjects(?string $name = null): array
+    {
+        $params = [];
+        if ($name) {
+            $params['name'] = $name;
+        }
+
+        $response = $this->client()->get(config('escriptorium.api.endpoints.projects'), $params);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium get projects request failed: '.$response->body());
+        }
+
+        $results = $response->json('results') ?? [];
+
+        // Manual check if API does not support exact name filtering, ensuring we match exactly
+        if ($name) {
+            $results = array_values(array_filter($results, fn ($p) => $p['name'] === $name));
+        }
+
+        return $results;
+    }
+
+    /**
+     * Get documents for a project, optionally filtered by name.
+     *
+     * @param  int|string  $projectId  Project ID
+     * @param  string|null  $name  Document name to search for
+     * @return array List of documents
+     */
+    public function getDocuments(int|string $projectId, ?string $name = null): array
+    {
+        $params = ['project' => $projectId];
+        if ($name) {
+            $params['name'] = $name;
+        }
+
+        $response = $this->client()->get(config('escriptorium.api.endpoints.documents'), $params);
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium get documents request failed: '.$response->body());
+        }
+
+        $results = $response->json('results') ?? [];
+
+        // Manual check for exact name match
+        if ($name) {
+            $results = array_values(array_filter($results, fn ($d) => $d['name'] === $name));
+        }
+
+        return $results;
+    }
 }

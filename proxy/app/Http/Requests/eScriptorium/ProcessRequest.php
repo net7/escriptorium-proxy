@@ -75,13 +75,15 @@ class ProcessRequest extends FormRequest
                 'example' => 'horizontal-lr',
             ],
             'project_name' => [
-                'description' => 'Nome del progetto contenitore su eScriptorium. Utilizzato per raggruppare i documenti.
-                Se lasciato vuoto, verrà generato un nome casuale univoco.',
+                'description' => 'Nome del progetto contenitore su eScriptorium.
+                - **API Key Proxy**: Crea sempre un nuovo progetto temporaneo.
+                - **API Key Escriptorium**: Funziona in modalità **Find or Create**. Se esiste già un progetto con questo nome, verrà riutilizzato (utile per raggruppare trascrizioni). Altrimenti ne crea uno nuovo.',
                 'example' => 'Progetto Manoscritti Vaticani',
             ],
             'document_name' => [
-                'description' => 'Nome del documento creato su eScriptorium.
-                Se lasciato vuoto, verrà generato un nome casuale univoco.',
+                'description' => 'Nome del documento su eScriptorium.
+                - **API Key Proxy**: Crea sempre un nuovo documento.
+                - **API Key Escriptorium**: Modalità **Find or Create**. Se nel progetto esiste già un documento con questo nome, verrà riutilizzato. Altrimenti ne crea uno nuovo.',
                 'example' => 'Vat. Lat. 3225',
             ],
             'transcription_name' => [
