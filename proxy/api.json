@@ -67,7 +67,7 @@
         "/v1/models": {
             "get": {
                 "operationId": "listModels",
-                "description": "Restituisce l'elenco dei modelli di segmentazione e riconoscimento disponibili per l'utente corrente.\n\n- **ID**: Identificativo univoco del modello (da usare in `recognition_model_id` o `segmentation_model_id`).\n- **Job**: Tipo di modello (`Segment` o `Recognize`).\n- **Accuracy**: Percentuale di accuratezza del modello (se disponibile).\n\n> **Nota**: Se autenticato con token eScriptorium diretto, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.",
+                "description": "Restituisce l'elenco dei modelli di segmentazione e riconoscimento disponibili per l'utente corrente.\n\n- **ID**: Identificativo univoco del modello (da usare in `recognition_model_id` o `segmentation_model_id`).\n- **Job**: Tipo di modello (`Segment` o `Recognize`).\n- **Accuracy**: Percentuale di accuratezza del modello (se disponibile).\n\n> **Nota**: Se autenticato con API Key Escriptorium, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.",
                 "summary": "Elenco modelli OCR",
                 "tags": [
                     "eScriptorium"

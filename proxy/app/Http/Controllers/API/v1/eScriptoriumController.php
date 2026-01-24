@@ -79,7 +79,7 @@ class eScriptoriumController extends Controller
      * - **Job**: Tipo di modello (`Segment` o `Recognize`).
      * - **Accuracy**: Percentuale di accuratezza del modello (se disponibile).
      *
-     * > **Nota**: Se autenticato con token eScriptorium diretto, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.
+     * > **Nota**: Se autenticato con API Key Escriptorium, vedi i modelli del tuo account. Altrimenti, vedi i modelli globali/di servizio.
      */
     #[Endpoint(operationId: 'listModels', title: 'Elenco modelli OCR')]
     #[Response(200, description: 'Elenco modelli recuperato con successo', type: 'array{results: array<array{id: int, name: string, accuracy_percent: string|null, job: string}>, count: int, status: int}')]
