@@ -43,10 +43,10 @@ fi
 # Wait for database
 wait_for_db
 
-# Generate APP Key
-if [ -z "$(php artisan key:generate --show)" ]; then
+# Generate APP Key if not set
+if [ -z "$APP_KEY" ]; then
     echo "🔑 Generating APP Key..."
-    php artisan key:generate
+    php artisan key:generate --force
 fi
 
 # Run migrations
