@@ -2,147 +2,575 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Cosa fa questo progetto
 
-Laravel-based proxy wrapping [eScriptorium](https://gitlab.com/scripta/escriptorium), a Django OCR/HTR platform. Provides REST API with async job queue for document transcription workflows.
+**Laravel Proxy** semplifica l'uso di [eScriptorium](https://gitlab.com/scripta/escriptorium) (Django + Vue + PostgreSQL + Redis + Celery) per la trascrizione OCR/HTR di documenti.
 
-## Build & Run Commands
+**Problema risolto:** Con le API native di eScriptorium servono molte chiamate per ottenere una trascrizione. Con il proxy Laravel bastano **2 chiamate**:
+1. `POST /api/v1/process/manifest` o `POST /api/v1/process/images` → avvia il processo
+2. `GET /api/v1/process/{id}` → polling per ottenere il risultato
+
+## Due modalità di autenticazione
+
+| Header `X-API-Key` | Tipo | Utente usato | Progetto |
+|--------------------|------|--------------|----------|
+| `esk_*` (generata da Laravel) | Service Mode | Account di servizio | **Temporaneo** (eliminato a fine processo) |
+| Token eScriptorium | Direct Mode | Tuo account | **Persistente** sul tuo account |
+
+Laravel verifica se l'API key è di eScriptorium **interrogando direttamente PostgreSQL** (tabella `authtoken_token`).
+
+## Comandi principali
 
 ```bash
-# Initial setup (auto-detects ARM64/AMD64 platform)
-make setup              # or: ./scripts/setup.sh
+# Setup iniziale (auto-detect piattaforma ARM64/AMD64)
+make setup
 
 # Development
-make dev                # Start all containers
-make dev-stop           # Stop containers
-make dev-logs           # Follow logs
-make dev-shell          # Shell into Laravel container
-make dev-artisan cmd="migrate"  # Run artisan commands
-make dev-tinker         # Laravel REPL
+make dev                # Avvia tutti i container
+make dev-stop           # Ferma
+make dev-logs           # Log
+make dev-shell          # Shell nel container Laravel
+make dev-artisan cmd="migrate"
 
 # Database
-make db-migrate         # Run migrations
-make db-seed            # Run seeders
-make db-fresh           # Fresh migrate with seed
+make db-migrate
+make db-fresh           # Reset completo con seed
 
-# Testing
+# Test
 docker compose -f docker-compose.development.yml exec proxy-php php artisan test
-docker compose -f docker-compose.development.yml exec proxy-php php artisan test --filter=TestClassName
+docker compose -f docker-compose.development.yml exec proxy-php php artisan test --filter=NomeTest
 
-# Queue
-make queue-restart      # Restart Laravel queue worker
-make celery-restart     # Restart Celery workers
+# Generare API key
+docker compose -f docker-compose.development.yml exec proxy-php php artisan apikey:generate "Nome"
 ```
 
-## Architecture
+## Architettura
 
 ```
-NGINX (:8080)
-├── Laravel Proxy (PHP-FPM)
-│   ├── MariaDB (Laravel DB)
-│   └── Queue Worker (Redis)
-└── eScriptorium (internal)
-    ├── Django (uWSGI :8000)
-    ├── PostgreSQL (read-only from Laravel)
-    └── Celery Workers
+┌─────────────────────────────────────────────────────────┐
+│                    NGINX (:8080)                        │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+         ┌────────────────┴────────────────┐
+         ▼                                 ▼
+┌─────────────────────┐          ┌─────────────────────────┐
+│   Laravel Proxy     │          │     eScriptorium        │
+│   ───────────────   │          │     ────────────        │
+│   • PHP-FPM         │  HTTP    │     • Django (uWSGI)    │
+│   • Queue Worker    │ ──────►  │     • Vue.js            │
+│   • MariaDB         │          │     • PostgreSQL ◄──────┼── Laravel legge
+│   • Redis (shared)  │          │     • Celery Workers    │   direttamente
+└─────────────────────┘          │     • Redis (shared)    │
+                                 └─────────────────────────┘
 ```
 
-**Two database connections:**
-- `mariadb` (default): Laravel's own data (API keys, transcriptions, logs)
-- `escriptorium`: Read-only access to eScriptorium's PostgreSQL
+## Database
+
+**Due connessioni configurate in `proxy/config/database.php`:**
+
+- `mariadb` (default): dati Laravel (API keys, transcriptions, logs)
+- `escriptorium`: accesso **read-only** a PostgreSQL di eScriptorium
 
 ```php
-DB::connection('escriptorium')->table('core_document')->get();
+// Esempio: verificare se un token è di eScriptorium
+DB::connection('escriptorium')
+    ->table('authtoken_token')
+    ->where('key', $token)
+    ->first();
 ```
 
-## Key Directories
+## Flusso di una trascrizione
 
-- `proxy/` - Laravel application
-- `escriptorium/` - Git submodule (DO NOT MODIFY)
-- `docker/` - Dockerfiles, nginx configs, entrypoint
-- `scripts/setup.sh` - Auto-configures platform and generates `escriptorium/variables.env`
+```
+CLIENT                          LARAVEL                         ESCRIPTORIUM
+   │                               │                                  │
+   │  POST /process/manifest       │                                  │
+   │  {manifest_url, model_id}     │                                  │
+   ├──────────────────────────────►│                                  │
+   │                               │  1. Crea progetto                │
+   │                               ├─────────────────────────────────►│
+   │                               │  2. Crea documento               │
+   │                               ├─────────────────────────────────►│
+   │                               │  3. Import IIIF manifest         │
+   │                               ├─────────────────────────────────►│
+   │  202 {id: "uuid"}             │                                  │
+   │◄──────────────────────────────┤                                  │
+   │                               │                                  │
+   │         ┌─────────────────────┤  JOBS ASINCRONI (Queue)          │
+   │         │                     │  ════════════════════            │
+   │         │  CheckImportJob ────┼─► Poll /api/tasks/               │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  SegmentJob ────────┼─► POST /segment/                 │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  CheckSegmentJob ───┼─► Poll /api/tasks/               │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  TranscribeJob ─────┼─► POST /transcribe/              │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  CheckTranscribeJob─┼─► Poll /api/tasks/               │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  DownloadJob ───────┼─► WebSocket + Export TEI         │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  ProcessTeiJob      │  (merge XML, extract text)       │
+   │         │         │           │                                  │
+   │         │         ▼           │                                  │
+   │         │  [Se Service Mode]──┼─► DELETE /projects/{id}/         │
+   │         └─────────────────────┤                                  │
+   │                               │                                  │
+   │  GET /process/{id}            │                                  │
+   ├──────────────────────────────►│                                  │
+   │  200 {status, text}           │                                  │
+   │◄──────────────────────────────┤                                  │
+```
 
-## Authentication System
+## Struttura file principali
 
-**Two modes determined by `X-API-Key` header:**
+```
+proxy/
+├── app/
+│   ├── Http/
+│   │   ├── Controllers/API/v1/eScriptoriumController.php  # Endpoint
+│   │   ├── Middleware/ValidateApiKey.php                  # Auth + rate limit
+│   │   └── Requests/eScriptorium/                         # Validazione input
+│   │
+│   ├── Jobs/                      # Pipeline asincrona
+│   │   ├── eScriptoriumImportDocumentJob.php      # Step 1: Import
+│   │   ├── eScriptoriumUploadImagesJob.php        # Step 1 alt: Upload
+│   │   ├── eScriptoriumCheckImportDocumentJob.php # Polling import
+│   │   ├── eScriptoriumFetchPartsJob.php          # Recupera pagine
+│   │   ├── eScriptoriumSegmentDocumentJob.php     # Step 2: Segmentazione
+│   │   ├── eScriptoriumCheckSegmentDocumentJob.php
+│   │   ├── eScriptoriumCreateTranscriptionJob.php # Crea layer
+│   │   ├── eScriptoriumTranscribeTranscriptionJob.php # Step 3: OCR
+│   │   ├── eScriptoriumCheckTranscribeTranscriptionJob.php
+│   │   ├── eScriptoriumDownloadJob.php            # Step 4: Export TEI
+│   │   └── eScriptoriumProcessTeiJob.php          # Step 5: Merge XML
+│   │
+│   ├── Services/
+│   │   ├── eScriptoriumService.php           # Client HTTP per eScriptorium
+│   │   └── eScriptoriumServiceDataManager.php # Gestione stato job
+│   │
+│   ├── Models/
+│   │   ├── Transcription.php    # Traccia stato processo
+│   │   └── ApiKey.php           # Gestione API keys
+│   │
+│   └── Contexts/
+│       └── ApiContext.php       # Service mode vs Direct mode
+│
+├── config/
+│   ├── database.php             # Connessioni MariaDB + PostgreSQL
+│   └── escriptorium.php         # URL, polling intervals, timeouts
+│
+└── routes/
+    └── api.php                  # Route definitions
 
-1. **Service Mode**: Proxy-generated key (`esk_*` prefix) → uses service account, auto-deletes projects
-2. **Direct Mode**: User's eScriptorium token → uses user's account, projects persist
+escriptorium/                    # Submodule Django (NON MODIFICARE)
+docker/                          # Dockerfile, nginx configs
+scripts/setup.sh                 # Setup automatico
+```
 
-`ApiContext` static class manages auth state per request/job:
+## API Endpoints
+
+Documentazione Swagger disponibile su `http://localhost:8080/docs` (Scalar UI)
+
+| Method | Endpoint | Descrizione |
+|--------|----------|-------------|
+| GET | `/api/v1/up` | Health check |
+| GET | `/api/v1/models` | Lista modelli OCR disponibili |
+| GET | `/api/v1/scripts` | Lista sistemi di scrittura |
+| POST | `/api/v1/process/manifest` | Avvia trascrizione da IIIF manifest |
+| POST | `/api/v1/process/images` | Avvia trascrizione da upload immagini |
+| GET | `/api/v1/process/{id}` | Stato e risultato trascrizione |
+
+## Stati della trascrizione
+
+```
+Pending → Importing → Segmenting → Transcribing → Downloading → Processing → Completed
+                                                                           ↘ Failed
+```
+
+Enum: `proxy/app/Enums/eScriptoriumStatusEnum.php`
+
+## Configurazione polling
+
+In `proxy/config/escriptorium.php`:
+
 ```php
-ApiContext::setDirectToken($token);  // Direct mode
-ApiContext::setServiceAuth();        // Service mode
-ApiContext::isDirectMode();          // Check mode
-ApiContext::reset();                 // Cleanup
+'polling' => [
+    'interval' => 30,        // secondi tra ogni check
+    'max_attempts' => [
+        'import' => 120,     // ~60 min max
+        'segment' => 240,    // ~120 min max
+        'transcribe' => 360, // ~180 min max
+    ],
+]
 ```
 
-## Job Pipeline
+## ApiContext - Gestione modalità auth
 
-Multi-stage async processing with polling:
+```php
+// Service Mode (API key Laravel)
+ApiContext::setServiceAuth();
+ApiContext::isDirectMode(); // false
+// → Usa credenziali servizio
+// → Progetto eliminato a fine processo
 
-```
-ManifestProcessRequest → ImportDocumentJob → CheckImportJob (polling)
-    → CreateTranscriptionJob → SegmentDocumentJob → CheckSegmentJob (polling)
-    → TranscribeJob → CheckTranscribeJob (polling)
-    → DownloadJob → ProcessTeiJob → Completed
-```
-
-Jobs are in `proxy/app/Jobs/`. Each polling job retries until operation completes or max attempts reached.
-
-## Status Enum
-
-`eScriptoriumStatusEnum`: Pending → Importing → Segmenting → Transcribing → Downloading → Processing → Completed/Failed
-
-## API Routes
-
-All in `proxy/routes/api.php`, require `X-API-Key` header:
-
-```
-GET  /api/v1/up              - Health check
-GET  /api/v1/models          - List OCR models
-GET  /api/v1/scripts         - List writing systems
-POST /api/v1/process/manifest - Start IIIF transcription
-POST /api/v1/process/images   - Start image upload transcription
-GET  /api/v1/process/{id}     - Get transcription status
+// Direct Mode (token eScriptorium)
+ApiContext::setDirectToken($token);
+ApiContext::isDirectMode(); // true
+// → Usa token utente
+// → Progetto persistente
 ```
 
-## Key Files
+I job usano il trait `UsesEscriptoriumAuth` per ripristinare il contesto auth dalla Transcription.
 
-- `proxy/app/Services/eScriptoriumService.php` - Main service class
-- `proxy/app/Services/eScriptoriumServiceDataManager.php` - Orchestrates multi-stage ops
-- `proxy/app/Http/Middleware/ValidateApiKey.php` - Auth, rate limiting, logging
-- `proxy/app/Contexts/ApiContext.php` - Request-scoped auth state
-- `proxy/config/escriptorium.php` - Service config (polling intervals, cache TTL)
-- `proxy/config/database.php` - Dual database connections
+---
 
-## Environment Variables
+# Dettagli Tecnici Approfonditi
 
-Key variables in `.env.development`:
-```env
-ESCRIPTORIUM_URL=http://escriptorium-web:8000
-ESCRITORIUM_USERNAME=admin
-ESCRITORIUM_PASSWORD=admin
-POSTGRES_HOST=postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=escriptorium
+## Flusso di Autenticazione (ValidateApiKey Middleware)
+
+File: `proxy/app/Http/Middleware/ValidateApiKey.php`
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      RICHIESTA HTTP con X-API-Key                       │
+└───────────────────────────────────┬─────────────────────────────────────┘
+                                    │
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │ Query PostgreSQL eScriptorium │
+                    │ SELECT * FROM authtoken_token │
+                    │ WHERE key = $plainKey         │
+                    └───────────────────────────────┘
+                                    │
+                    ┌───────────────┴───────────────┐
+                    │                               │
+                    ▼                               ▼
+          Token TROVATO                    Token NON TROVATO
+                    │                               │
+                    ▼                               ▼
+    ┌───────────────────────────┐   ┌───────────────────────────┐
+    │     DIRECT MODE           │   │     SERVICE MODE          │
+    │                           │   │                           │
+    │ ApiContext::setDirectToken│   │ Cerca in Laravel ApiKey   │
+    │ getOrCreateVirtualApiKey  │   │ ApiContext::setServiceAuth│
+    │                           │   │                           │
+    │ → Usa token utente        │   │ → Usa credenziali servizio│
+    │ → Progetto PERSISTENTE    │   │ → Progetto TEMPORANEO     │
+    │ → Find or Create abilitato│   │ → Eliminato a fine processo│
+    └───────────────────────────┘   └───────────────────────────┘
+                    │                               │
+                    └───────────────┬───────────────┘
+                                    ▼
+                    ┌───────────────────────────────┐
+                    │ Rate Limiting (per API key)   │
+                    │ Request Logging (opzionale)   │
+                    │ Bind api_key a Request        │
+                    │ Merge is_escriptorium_api_key │
+                    │ Merge escriptorium_token      │
+                    └───────────────────────────────┘
 ```
 
-## Development Ports
+**Virtual API Key**: In Direct Mode, Laravel crea una `ApiKey` virtuale per l'utente eScriptorium per riutilizzare l'infrastruttura di logging e rate limiting.
 
-| Port | Service |
-|------|---------|
+## Struttura service_data (JSON nella Transcription)
+
+Questa struttura JSON viene salvata nel campo `service_data` della tabella `transcriptions` e traccia tutto lo stato del processo:
+
+```json
+{
+  "escriptorium": {
+    "request": {
+      "source_type": "manifest|images",
+      "manifest_url": "https://...",
+      "script_name": "Latin",
+      "recognition_model_id": 142,
+      "segmentation_model_id": 45,
+      "text_direction": "horizontal-lr",
+      "pages": "1-10",
+      "pages_array": [1, 2, 3, ...],
+      "project_name": "My Project",
+      "document_name": "My Document"
+    },
+    "project": {
+      "pk": 123,
+      "slug": "my-project-abc123",
+      "name": "My Project"
+    },
+    "document": {
+      "pk": 456,
+      "name": "My Document",
+      "project": "my-project-abc123",
+      "valid_block_types": [...]
+    },
+    "transcription_name": "HTR Output",
+    "transcription": {
+      "pk": 789,
+      "name": "HTR Output"
+    },
+    "parts": [
+      {"pk": 1001, "order": 1, "image": "...", "filename": "page1.jpg"},
+      {"pk": 1002, "order": 2, "image": "...", "filename": "page2.jpg"}
+    ],
+    "image_paths": ["transcriptions/pending_uploads/abc.jpg"],
+    "steps": {
+      "import": {
+        "started_at": "2024-01-01T10:00:00Z",
+        "completed_at": "2024-01-01T10:05:00Z",
+        "polling_attempt": 5,
+        "last_tasks_response": {...}
+      },
+      "segment": {...},
+      "transcribe": {...},
+      "download": {
+        "download_url": "/media/exports/...",
+        "local_path": "escriptorium/exports/uuid/file.zip"
+      }
+    }
+  }
+}
+```
+
+## Pipeline dei Job con API Calls
+
+### 1. ImportDocumentJob / UploadImagesJob
+
+**Manifest Mode**:
+```
+POST /api/documents/{pk}/import/
+{
+  "mode": "iiif",
+  "iiif_uri": "https://example.com/manifest.json",
+  "name": "transcription_name"
+}
+```
+
+**Images Mode**:
+```
+POST /api/documents/{pk}/parts/
+Content-Type: multipart/form-data
+image: <file>
+```
+
+### 2. CheckImportDocumentJob (Polling)
+
+```
+GET /api/tasks/?document={pk}
+```
+
+**Workflow States di eScriptorium**:
+| State | Significato | Azione |
+|-------|-------------|--------|
+| 0 | Queued | Continua polling |
+| 1 | Running | Continua polling |
+| 2 | Crashed | FAIL - Interrompi |
+| 3 | Finished | SUCCESS - Prossimo step |
+| 4 | Canceled | FAIL - Interrompi |
+
+**Task Methods monitorati**:
+- Manifest: `imports.tasks.document_import`
+- Images: `*convert` (qualsiasi metodo che finisce con "convert")
+
+### 3. FetchPartsJob
+
+```
+GET /api/documents/{pk}/parts/?ordering=order&paginate_by=5000
+```
+
+Salva l'array `parts` con tutti i `pk` delle pagine in `service_data`.
+
+### 4. SegmentDocumentJob
+
+```
+POST /api/documents/{pk}/segment/
+{
+  "steps": "both",          // "both" | "lines" | "masks" | "regions"
+  "override": true,
+  "text_direction": "horizontal-lr",
+  "model": 45,              // opzionale, segmentation model pk
+  "parts": [1001, 1002]     // opzionale, pk delle parti
+}
+```
+
+### 5. CheckSegmentDocumentJob (Polling)
+
+```
+GET /api/tasks/?document={pk}
+```
+
+Monitora task con method contenente `segment`.
+
+### 6. CreateTranscriptionJob
+
+```
+POST /api/documents/{pk}/transcriptions/
+{
+  "name": "HTR Output"
+}
+```
+
+Operazione **sincrona** - ritorna subito il `pk` della transcription.
+
+### 7. TranscribeTranscriptionJob
+
+```
+POST /api/documents/{pk}/transcribe/
+{
+  "model": 142,             // recognition model pk
+  "transcription": 789,     // transcription pk (dove salvare output)
+  "parts": [1001, 1002]     // opzionale
+}
+```
+
+### 8. CheckTranscribeTranscriptionJob (Polling)
+
+```
+GET /api/tasks/?document={pk}
+```
+
+Monitora task con method contenente `transcribe`.
+
+### 9. DownloadJob (WebSocket + Export)
+
+**Step 1: Connessione WebSocket**
+```
+ws://escriptorium-nginx/ws/notif/
+Headers:
+  Cookie: sessionid={session_id}
+  Origin: http://escriptorium-web:8000
+```
+
+**Step 2: Join Room**
+```json
+{"type": "join-room", "object_cls": "document", "object_pk": 456}
+```
+
+**Step 3: Trigger Export via API**
+```
+POST /api/documents/{pk}/export/
+{
+  "file_format": "teixml",
+  "include_characters": false,
+  "include_images": false,
+  "transcription": 789,
+  "parts": [1001, 1002],
+  "region_types": ["Paragraph", "Undefined", "Orphan"]
+}
+```
+
+**Step 4: Attesa messaggio WebSocket**
+```json
+{
+  "type": "message",
+  "text": "Export done!",
+  "links": [{"src": "/media/exports/doc_456_export.zip"}]
+}
+```
+
+**Step 5: Download file**
+```
+GET {base_url}/media/exports/doc_456_export.zip
+Authorization: Token {token}
+```
+
+**Step 6: Cleanup (solo Service Mode)**
+```
+DELETE /api/projects/{pk}/
+```
+
+### 10. ProcessTeiJob
+
+- Estrae ZIP
+- Merge di tutti i file TEI XML in un unico documento
+- Estrae plain text dal TEI
+- Aggiorna `Transcription.text` con il risultato
+- Imposta status a `COMPLETED`
+
+## Gestione Polling e Job Obsoleti
+
+Il sistema usa `eScriptoriumServiceDataManager` per gestire lo stato dei job e prevenire race conditions:
+
+```php
+// Ogni job di polling porta con sé il suo "pollingAttempt"
+public function __construct(Transcription $transcription, int $pollingAttempt = 1)
+
+// Prima di processare, verifica se questo tentativo è ancora valido
+if (!$this->dataManager->isPollingAttemptValid(STEP_IMPORT, $this->pollingAttempt)) {
+    return; // Job obsoleto - esce silenziosamente
+}
+
+// Aggiorna il contatore nel service_data
+$this->dataManager->updatePolling(STEP_IMPORT, $this->pollingAttempt, $tasksResponse);
+```
+
+Questo previene situazioni in cui job vecchi in coda processano dati obsoleti.
+
+## WebSocket: Dettagli Tecnici
+
+Il WebSocket è necessario perché l'export di eScriptorium è **asincrono**: l'API `/export/` risponde subito con `200 OK`, ma il file viene generato in background da Celery.
+
+**Autenticazione WebSocket**:
+1. GET `/login/` → ottieni `csrftoken` cookie
+2. POST `/login/` con username/password + csrftoken → ottieni `sessionid` cookie
+3. Connetti WebSocket con `Cookie: sessionid=...`
+
+**Messaggi monitorati**:
+```json
+// Successo
+{"type": "message", "text": "Export done!", "links": [{"src": "/media/..."}]}
+
+// Errore
+{"type": "event", "name": "export:error", "data": {"reason": "..."}}
+```
+
+## eScriptoriumService: Metodi Principali
+
+| Metodo | Descrizione | Sincrono |
+|--------|-------------|----------|
+| `isUp()` | Health check | ✅ |
+| `models()` | Lista modelli OCR | ✅ |
+| `scripts()` | Lista sistemi scrittura | ✅ |
+| `createProject(name)` | Crea progetto | ✅ |
+| `createDocument(name, projectSlug, script)` | Crea documento | ✅ |
+| `importDocument(docId, mode, iiifUri, name)` | Import da IIIF | ❌ |
+| `uploadPart(docId, content, filename)` | Upload immagine | ✅ |
+| `getDocumentParts(docId)` | Lista parti/pagine | ✅ |
+| `segmentDocument(docId, parts, modelId, ...)` | Avvia segmentazione | ❌ |
+| `createTranscription(docId, name)` | Crea layer trascrizione | ✅ |
+| `transcribeTranscription(docId, parts, trId, modelId)` | Avvia OCR | ❌ |
+| `tasks(docId)` | Polling stato task | ✅ |
+| `exportDocument(docId, trId, parts, format, regions)` | Avvia export | ❌ |
+| `deleteProject(projectId)` | Elimina progetto | ✅ |
+| `mergeTeiContents(contents[])` | Merge TEI XML | ✅ |
+| `extractPlainText(teiXml)` | Estrai testo | ✅ |
+| `getProjects(name)` | Cerca progetti | ✅ |
+| `getDocuments(projectId, name)` | Cerca documenti | ✅ |
+
+---
+
+## Porte development
+
+| Porta | Servizio |
+|-------|----------|
 | 8080 | Laravel Proxy (main) |
 | 8081 | phpMyAdmin |
-| 8082 | eScriptorium direct |
+| 8082 | eScriptorium diretto |
 | 5050 | pgAdmin |
 | 5173 | Vite dev server |
 | 5555 | Flower (Celery monitor) |
 
-## Important Notes
+## Note importanti
 
-- `escriptorium/` is a git submodule - never modify files inside
-- `escriptorium/variables.env` is generated by `scripts/setup.sh`, not tracked in git
-- Platform (arm64/amd64) is auto-detected and configured in docker-compose.development.yml
-- Jobs use `UsesEscriptoriumAuth` trait to restore auth context from Transcription model
+- `escriptorium/` è un **git submodule** - non modificare i file al suo interno
+- `escriptorium/variables.env` viene generato da `scripts/setup.sh`
+- La piattaforma (ARM64/AMD64) è auto-rilevata e configurata nel docker-compose
+- I job di polling hanno logica per gestire job obsoleti/duplicati
+- Il WebSocket è usato solo per ricevere notifica di export completato
+- In Direct Mode, i progetti NON vengono eliminati (l'utente li vede nel suo account eScriptorium)
+- `getOrCreateVirtualApiKey` crea una ApiKey Laravel "virtuale" per tracciare rate limit e log anche per token eScriptorium diretti
