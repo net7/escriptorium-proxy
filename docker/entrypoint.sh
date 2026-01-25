@@ -45,8 +45,32 @@ wait_for_db
 
 # Generate APP Key if not set
 if [ -z "$APP_KEY" ]; then
-    echo "🔑 Generating APP Key..."
-    php artisan key:generate --force
+    # Only allow the main php-fpm process to generate the key to avoid race conditions
+    if [ "$1" = "php-fpm" ]; then
+        # Check if .env has a non-empty APP_KEY
+        if grep -q "^APP_KEY=.\+" .env 2>/dev/null; then
+            echo "✅ APP Key found in .env, skipping generation."
+        else
+            echo "🔑 Generating APP Key..."
+            php artisan key:generate --force
+        fi
+    else
+        # Other processes (like queue workers) should wait for the key
+        echo "⏳ Waiting for APP Key to be generated..."
+        maxTries=30
+        while [ $maxTries -gt 0 ]; do
+            if grep -q "^APP_KEY=.\+" .env 2>/dev/null; then
+                echo "✅ APP Key found!"
+                break
+            fi
+            maxTries=$((maxTries - 1))
+            sleep 1
+        done
+        
+        if [ $maxTries -eq 0 ]; then
+             echo "⚠️  Timed out waiting for APP_KEY. Continuing anyway..."
+        fi
+    fi
 fi
 
 # Run migrations
