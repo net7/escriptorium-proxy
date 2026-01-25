@@ -1,6 +1,6 @@
 # Docker Compose - Development Environment
 # Features: Hot reload for Laravel, exposed debug ports, phpMyAdmin
-# Platform: Auto-detects ARM64 (Apple Silicon) and AMD64
+# Platform: ARM64 (Apple Silicon) - change for AMD64 if needed
 
 services:
   # ===========================================
@@ -139,6 +139,7 @@ services:
   # ===========================================
   escriptorium-nginx:
     image: nginx:alpine
+    platform: linux/arm64
     ports:
       - "8082:80"
     volumes:
@@ -156,6 +157,7 @@ services:
     build:
       context: ./escriptorium
       dockerfile: Dockerfile
+    platform: linux/arm64
     env_file:
       - ./escriptorium/variables.env
     volumes:
@@ -176,7 +178,9 @@ services:
   escriptorium-ws:
     build:
       context: ./escriptorium
-      dockerfile: Dockerfile    env_file:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    env_file:
       - ./escriptorium/variables.env
     volumes:
       - escriptorium-static:/usr/src/app/static
@@ -194,7 +198,9 @@ services:
   # ESCRIPTORIUM DATABASES
   # ===========================================
   postgres:
-    image: postgres:15-alpine    expose:
+    image: postgres:15-alpine
+    platform: linux/arm64
+    expose:
       - "5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -212,7 +218,9 @@ services:
     restart: unless-stopped
 
   redis:
-    image: redis:alpine    expose:
+    image: redis:alpine
+    platform: linux/arm64
+    expose:
       - "6379"
     volumes:
       - redis-data:/data
@@ -227,7 +235,9 @@ services:
   celery-main:
     build:
       context: ./escriptorium
-      dockerfile: Dockerfile    env_file:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    env_file:
       - ./escriptorium/variables.env
     environment:
       - OMP_NUM_THREADS=1
@@ -245,7 +255,9 @@ services:
   celery-gpu:
     build:
       context: ./escriptorium
-      dockerfile: Dockerfile    env_file:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    env_file:
       - ./escriptorium/variables.env
     environment:
       - KRAKEN_TRAINING_DEVICE=cpu
@@ -264,7 +276,9 @@ services:
   celery-low-priority:
     build:
       context: ./escriptorium
-      dockerfile: Dockerfile    env_file:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    env_file:
       - ./escriptorium/variables.env
     volumes:
       - escriptorium-static:/usr/src/app/static
@@ -280,7 +294,9 @@ services:
   celery-live:
     build:
       context: ./escriptorium
-      dockerfile: Dockerfile    env_file:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    env_file:
       - ./escriptorium/variables.env
     volumes:
       - escriptorium-static:/usr/src/app/static
@@ -297,7 +313,9 @@ services:
   # MONITORING (Development)
   # ===========================================
   flower:
-    image: mher/flower:latest    ports:
+    image: mher/flower:latest
+    platform: linux/arm64
+    ports:
       - "5555:5555"
     command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
     depends_on:
@@ -309,7 +327,9 @@ services:
   mail:
     build:
       context: ./escriptorium/exim
-      dockerfile: Dockerfile    expose:
+      dockerfile: Dockerfile
+    platform: linux/arm64
+    expose:
       - "25"
     environment:
       - PRIMARY_HOST=${DOMAIN:-localhost}
