@@ -87,6 +87,9 @@ RUN bun install
 # PHP configuration for development
 RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
 
+# Upload limits configuration
+COPY docker/php-uploads.ini "$PHP_INI_DIR/conf.d/uploads.ini"
+
 # Expose PHP-FPM port
 EXPOSE 9000
 
@@ -116,6 +119,9 @@ RUN bun install --production \
 
 # PHP configuration for production
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+# Upload limits configuration
+COPY docker/php-uploads.ini "$PHP_INI_DIR/conf.d/uploads.ini"
 
 # Configure OPcache for production
 RUN echo "opcache.enable=1" >> "$PHP_INI_DIR/conf.d/opcache.ini" \
