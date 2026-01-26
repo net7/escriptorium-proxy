@@ -68,7 +68,7 @@ class eScriptoriumController extends Controller
             return response()->noContent(503);
         }
 
-        return response()->noContent($up ? 200 : 503);
+        return response()->noContent($up ? 204 : 503);
     }
 
     /**

@@ -19,8 +19,14 @@ return Application::configure(basePath: dirname(__DIR__))
         // Append terminable middleware for cleanup
         $middleware->append(\App\Http\Middleware\ResetApiContext::class);
 
+        // Inertia middleware for web routes
+        $middleware->web(append: [
+            \App\Http\Middleware\HandleInertiaRequests::class,
+        ]);
+
         $middleware->alias([
             'api.key' => \App\Http\Middleware\ValidateApiKey::class,
+            'local' => \App\Http\Middleware\EnsureLocalEnvironment::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

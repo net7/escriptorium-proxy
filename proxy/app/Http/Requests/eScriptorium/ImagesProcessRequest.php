@@ -122,7 +122,7 @@ class ImagesProcessRequest extends FormRequest
             $scripts = eScriptorium::scripts();
             $scriptId = (int) $this->script_id;
             foreach ($scripts as $script) {
-                if ($script['pk'] === $scriptId) {
+                if ($script['id'] === $scriptId) {
                     $dataToMerge['script_name'] = $script['name'];
                     break;
                 }
