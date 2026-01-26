@@ -128,66 +128,9 @@ class eScriptoriumCheckImportDocumentJob implements ShouldQueue
         $sourceType = $this->dataManager->getData()['request']['source_type'] ?? ProcessSourceEnum::Manifest->value;
 
         if ($sourceType === ProcessSourceEnum::Images->value) {
-            // Per le immagini caricate singolarmente, monitoriamo i task di conversione "convert"
-            // Cerchiamo task il cui metodo finisce con "convert" (es. core.tasks.convert)
-            $relevantTasks = array_values(array_filter($tasks['results'], function ($result) use ($documentId) {
-                return $result['document'] === (int) $documentId
-                    && str_ends_with($result['method'], 'convert');
-            }));
-
-            if (empty($relevantTasks)) {
-                // Se non ci sono task di conversione, potrebbe essere che:
-                // 1. Sono stati cancellati (improbabile così presto)
-                // 2. Non sono ancora partiti (possibile se c'è lag)
-                // 3. L'upload è stato così veloce che non li vediamo? No, il task report dovrebbe restare.
-
-                // Verifica se abbiamo parti. Se abbiamo parti e nessun task running, siamo ok.
-                // Per sicurezza, se siamo ai primi tentativi, aspettiamo ancora.
-                if ($this->pollingAttempt < 3) {
-                    $this->scheduleNextCheck();
-
-                    return;
-                }
-
-                // Se dopo 3 tentativi non vediamo task convert, assumiamo siano finiti o non necessari
-                // (es. immagini già supportate nativamente?)
-                Log::warning('⚠️ [eScriptorium] No convert tasks found for images. Assuming completion.');
-                $this->handleTaskCompleted();
-
-                return;
-            }
-
-            // Controlliamo lo stato cumulativo
-            $hasRunning = false;
-            $hasFailed = false;
-            $failureMessages = [];
-
-            foreach ($relevantTasks as $task) {
-                $state = $task['workflow_state'];
-                if (in_array($state, [0, 1])) { // Queued, Running
-                    $hasRunning = true;
-                } elseif (in_array($state, [2, 4])) { // Crashed, Canceled
-                    $hasFailed = true;
-                    $failureMessages[] = $task['messages'] ?? 'Unknown error';
-                }
-            }
-
-            if ($hasFailed) {
-                // Se anche uno solo fallisce, consideriamo l'import fallito?
-                // O continuiamo con quelli buoni? Per ora fail fast.
-                $this->handleTaskFailed('Image conversion failed: '.implode('; ', array_unique($failureMessages)));
-
-                return;
-            }
-
-            if ($hasRunning) {
-                $this->scheduleNextCheck();
-
-                return;
-            }
-
-            // Se nessuno corre e nessuno è fallito, sono tutti finiti (3)
-            $this->handleTaskCompleted();
+            // Per le immagini caricate, verifichiamo lo stato di conversione
+            // tramite il campo 'workflow' delle parti (più affidabile dei task)
+            $this->checkImageConversionViaPartsWorkflow($documentId);
 
         } else {
             // Logica esistente per MANIFEST
@@ -223,6 +166,75 @@ class eScriptoriumCheckImportDocumentJob implements ShouldQueue
                     $this->handleError("Unknown workflow state: {$workflowState}");
             }
         }
+    }
+
+    /**
+     * Verifica lo stato di conversione delle immagini tramite il campo workflow delle parti.
+     *
+     * Il campo workflow di ogni parte contiene:
+     * - { "convert": "ongoing" } → conversione in corso
+     * - { "convert": "done" } → conversione completata
+     * - {} o senza "convert" → già convertita o non necessaria
+     */
+    private function checkImageConversionViaPartsWorkflow(int $documentId): void
+    {
+        try {
+            $partsResponse = eScriptorium::getDocumentParts((string) $documentId);
+        } catch (\Exception $e) {
+            Log::warning('⚠️ [eScriptorium] Failed to fetch parts for conversion check, will retry', [
+                'transcription_id' => $this->transcription->id,
+                'error' => $e->getMessage(),
+            ]);
+            $this->scheduleNextCheck();
+
+            return;
+        }
+
+        $parts = $partsResponse['results'] ?? [];
+
+        // Se non ci sono parti, potrebbe essere che l'upload è ancora in corso
+        if (empty($parts)) {
+            Log::info('⏳ [eScriptorium] No parts found yet, waiting...', [
+                'transcription_id' => $this->transcription->id,
+            ]);
+            $this->scheduleNextCheck();
+
+            return;
+        }
+
+        // Conta quante parti hanno conversione in corso
+        $converting = 0;
+        $converted = 0;
+        $total = count($parts);
+
+        foreach ($parts as $part) {
+            $workflow = $part['workflow'] ?? [];
+            $convertStatus = $workflow['convert'] ?? null;
+
+            if ($convertStatus === 'ongoing') {
+                $converting++;
+            } else {
+                // "done" o non presente (già convertita)
+                $converted++;
+            }
+        }
+
+        Log::info("⏳ [eScriptorium] Image conversion status: {$converted}/{$total} parts converted", [
+            'transcription_id' => $this->transcription->id,
+            'converting' => $converting,
+            'converted' => $converted,
+            'total' => $total,
+        ]);
+
+        if ($converting > 0) {
+            // Alcune parti sono ancora in conversione
+            $this->scheduleNextCheck();
+
+            return;
+        }
+
+        // Tutte le parti sono convertite
+        $this->handleTaskCompleted();
     }
 
     /**

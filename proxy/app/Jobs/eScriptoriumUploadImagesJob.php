@@ -86,10 +86,11 @@ class eScriptoriumUploadImagesJob implements ShouldQueue
 
             Log::info("Successfully uploaded $uploadedCount images. Dispatching status check.");
 
-            // STEP 2: Mark step as completed (upload phase)
-            // Note: Use a tentative 'completed' here, but actual readiness depends on tasks.
-            // The next job will handle the 'processing' check.
-            $this->dataManager->completeStep(eScriptoriumServiceDataManager::STEP_IMPORT, ['uploaded_count' => $uploadedCount]);
+            // STEP 2: Save upload count but DON'T complete the step yet
+            // The CheckImportDocumentJob will complete the step when convert tasks finish
+            $this->dataManager->setStepResponse(eScriptoriumServiceDataManager::STEP_IMPORT, [
+                'uploaded_count' => $uploadedCount,
+            ]);
 
             // STEP 3: Dispatch polling job
             // This job will wait for any generated tasks (like 'convert') to finish
