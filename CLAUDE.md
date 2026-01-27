@@ -153,7 +153,8 @@ proxy/
 │   │
 │   ├── Services/
 │   │   ├── eScriptoriumService.php           # Client HTTP per eScriptorium
-│   │   └── eScriptoriumServiceDataManager.php # Gestione stato job
+│   │   ├── eScriptoriumServiceDataManager.php # Gestione stato job
+│   │   └── DjangoSessionService.php          # Crea sessioni Django per WebSocket
 │   │
 │   ├── Models/
 │   │   ├── Transcription.php    # Traccia stato processo
@@ -208,7 +209,11 @@ In `proxy/config/escriptorium.php`:
         'segment' => 240,    // ~120 min max
         'transcribe' => 360, // ~180 min max
     ],
-]
+],
+'django' => [
+    // DEVE corrispondere a SECRET_KEY in escriptorium/variables.env
+    'secret_key' => env('ESCRIPTORIUM_DJANGO_SECRET_KEY', 'changeme'),
+],
 ```
 
 ## ApiContext - Gestione modalità auth
@@ -514,25 +519,102 @@ Questo previene situazioni in cui job vecchi in coda processano dati obsoleti.
 
 Il WebSocket è necessario perché l'export di eScriptorium è **asincrono**: l'API `/export/` risponde subito con `200 OK`, ma il file viene generato in background da Celery.
 
-**Autenticazione WebSocket**:
+**Notifiche eScriptorium**:
+- `user.notify('Export done!', links=[...])` → invia alla **room dell'utente** (`notif-{user_pk}`) CON link download
+- `send_event('document', pk, 'export:done', {})` → invia alla **room del documento** SENZA link
+
+Per ricevere il link di download, il WebSocket DEVE essere autenticato come l'utente che ha lanciato l'export.
+
+**Autenticazione WebSocket - Service Mode**:
 1. GET `/login/` → ottieni `csrftoken` cookie
-2. POST `/login/` con username/password + csrftoken → ottieni `sessionid` cookie
+2. POST `/login/` con username/password service account → ottieni `sessionid` cookie
 3. Connetti WebSocket con `Cookie: sessionid=...`
+
+**Autenticazione WebSocket - Direct Mode**:
+In Direct Mode abbiamo solo il token API dell'utente, non le sue credenziali. Per autenticare il WebSocket come quell'utente, creiamo una sessione Django direttamente nel database PostgreSQL:
+
+1. `DjangoSessionService::createSessionForToken($apiToken)`:
+   - Query `authtoken_token` + `users_user` per ottenere `user_id` e `password_hash`
+   - Calcola `_auth_user_hash` (come fa Django)
+   - Codifica session data nel formato Django
+   - Inserisce in `django_session`
+2. Connetti WebSocket con `Cookie: sessionid={session_key_creato}`
 
 **Messaggi monitorati**:
 ```json
-// Successo
+// Successo (ricevuto nella room dell'utente)
 {"type": "message", "text": "Export done!", "links": [{"src": "/media/..."}]}
 
 // Errore
 {"type": "event", "name": "export:error", "data": {"reason": "..."}}
 ```
 
+## DjangoSessionService: Creazione Sessioni Django da PHP
+
+File: `proxy/app/Services/DjangoSessionService.php`
+
+Questo servizio permette di creare sessioni Django valide direttamente da PHP, necessario per autenticare il WebSocket in Direct Mode.
+
+**Formato sessione Django**:
+```
+{payload}:{timestamp_base62}:{signature}
+```
+
+Dove `payload` può essere:
+- `{base64_json}` - dati non compressi
+- `.{base64_zlib_json}` - dati compressi (il punto indica compressione)
+
+**Session dict (dati nella sessione)**:
+```json
+{
+  "_auth_user_id": "2",
+  "_auth_user_backend": "django.contrib.auth.backends.ModelBackend",
+  "_auth_user_hash": "6d063b35f3ee8e0be46c4403535041e6fd71563381825283b7c81265369c2d3b"
+}
+```
+
+**Calcolo `_auth_user_hash`**:
+```php
+// Django: AbstractBaseUser.get_session_auth_hash()
+$keySalt = 'django.contrib.auth.models.AbstractBaseUser.get_session_auth_hash';
+$key = hash('sha256', $keySalt . $secretKey, true);  // DEVE essere SHA256
+$authUserHash = hash_hmac('sha256', $passwordHash, $key);
+```
+
+**Firma della sessione**:
+```php
+// Salt DEVE essere 'django.contrib.sessions.SessionStore' (NON backends.db!)
+$salt = 'django.contrib.sessions.SessionStore';
+$keySalt = $salt . 'signer';
+$key = hash('sha256', $keySalt . $secretKey, true);
+$signature = hash_hmac('sha256', $valueToSign, $key, true);
+$base64Signature = rtrim(strtr(base64_encode($signature), '+/', '-_'), '=');
+```
+
+**Base62 (per timestamp)**:
+```php
+// Django usa questo alfabeto specifico
+$alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+```
+
+**Configurazione**:
+```php
+// config/escriptorium.php
+'django' => [
+    'secret_key' => env('ESCRIPTORIUM_DJANGO_SECRET_KEY', 'changeme'),
+],
+```
+
+**IMPORTANTE**: `ESCRIPTORIUM_DJANGO_SECRET_KEY` DEVE corrispondere a `SECRET_KEY` in `escriptorium/variables.env`.
+
 ## eScriptoriumService: Metodi Principali
 
 | Metodo | Descrizione | Sincrono |
 |--------|-------------|----------|
 | `isUp()` | Health check | ✅ |
+| `getCurrentToken()` | Token corrente (service o direct) | ✅ |
+| `getSessionCookie()` | Session Django per WebSocket | ✅ |
+| `createWebSocketClient(timeout)` | Client WebSocket configurato | ✅ |
 | `models()` | Lista modelli OCR | ✅ |
 | `scripts()` | Lista sistemi scrittura | ✅ |
 | `createProject(name)` | Crea progetto | ✅ |
@@ -550,6 +632,7 @@ Il WebSocket è necessario perché l'export di eScriptorium è **asincrono**: l'
 | `extractPlainText(teiXml)` | Estrai testo | ✅ |
 | `getProjects(name)` | Cerca progetti | ✅ |
 | `getDocuments(projectId, name)` | Cerca documenti | ✅ |
+| `getCurrentUser()` | Info utente corrente (Direct Mode) | ✅ |
 
 ---
 
@@ -573,3 +656,5 @@ Il WebSocket è necessario perché l'export di eScriptorium è **asincrono**: l'
 - Il WebSocket è usato solo per ricevere notifica di export completato
 - In Direct Mode, i progetti NON vengono eliminati (l'utente li vede nel suo account eScriptorium)
 - `getOrCreateVirtualApiKey` crea una ApiKey Laravel "virtuale" per tracciare rate limit e log anche per token eScriptorium diretti
+- **CRITICO**: `ESCRIPTORIUM_DJANGO_SECRET_KEY` deve corrispondere a `SECRET_KEY` di Django per la creazione di sessioni WebSocket in Direct Mode
+- In Direct Mode, il WebSocket viene autenticato creando una sessione Django direttamente in PostgreSQL (via `DjangoSessionService`)
