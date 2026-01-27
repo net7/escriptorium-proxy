@@ -61,13 +61,13 @@ return [
     ],
 
     'body_parameters' => [
-        'script_id' => 'Writing system ID. Get from `GET /v1/scripts`.',
-        'manifest_url' => 'Full IIIF Manifest URL (v2 or v3). Must be publicly accessible.',
-        'pages' => 'Pages selection. Supports ranges (`1-5`), lists (`1,3,5`), or combinations (`1-3,7,10-12`). Defaults to first 10 pages.',
-        'recognition_model_id' => 'HTR/OCR model ID for text recognition. Get from `GET /v1/models` filtering by `job=recognize`.',
-        'segmentation_model_id' => 'Segmentation model ID for layout analysis. Get from `GET /v1/models` filtering by `job=segment`. Uses system default if omitted.',
-        'text_direction' => 'Text reading direction: `horizontal-lr` (Latin), `horizontal-rl` (Arabic, Hebrew), `vertical-lr`, `vertical-rl` (CJK).',
-        'document_id' => 'Existing eScriptorium document ID (pk). Only works with eScriptorium API Key (Direct Mode). Images/manifest will be added to this document. If omitted, a new document is created.',
-        'images' => 'Array of image files to transcribe. Supported formats: JPEG, PNG, TIFF. Limit: 20MB per file.',
+        'script_id' => 'ID of the writing system used in the document (e.g., Latin, Arabic, Hebrew, Greek). Required to correctly configure text recognition. Retrieve the list of available scripts with `GET /api/v1/scripts`.',
+        'manifest_url' => 'Complete URL of a IIIF Manifest (v2 only, v3 not supported). The manifest must be publicly accessible without authentication. Example: `https://digi.vatlib.it/iiif/MSS_Vat.lat.3225/manifest.json`.',
+        'pages' => 'Selection of pages to process from the manifest. Supports: single pages (`1,3,5`), ranges (`1-10`), or combinations (`1-3,7,10-12`). Page numbering starts at 1. If omitted, processes the first 10 pages by default.',
+        'recognition_model_id' => 'ID of the HTR (Handwritten Text Recognition) or OCR model to use for text transcription. Retrieve available models with `GET /api/v1/models` and filter by `job=recognize`. The model must be compatible with the document\'s writing system.',
+        'segmentation_model_id' => 'ID of the segmentation model for page layout analysis (detecting text lines, regions, paragraphs). Retrieve available models with `GET /api/v1/models` and filter by `job=segment`. If omitted, uses eScriptorium\'s default segmentation (blla.mlmodel).',
+        'text_direction' => 'Reading direction of the text in the document. Values: `horizontal-lr` (left-to-right: Latin, Cyrillic, Greek), `horizontal-rl` (right-to-left: Arabic, Hebrew), `vertical-lr` (top-to-bottom, columns left-to-right), `vertical-rl` (top-to-bottom, columns right-to-left: traditional CJK).',
+        'document_id' => 'ID (pk) of an existing document on eScriptorium. **Only works with eScriptorium API Key (Direct Mode)**. When provided, images/manifest will be added to this existing document instead of creating a new one. Useful for adding pages to an existing document. If omitted or if using a Service API Key, a new temporary document is created. Returns 404 if the document does not exist, 403 if not accessible.',
+        'images' => 'Array of image files to transcribe. Supported formats: JPEG, PNG, TIFF, BMP, GIF. Maximum size: 20MB per file. Images are processed in the order they are uploaded. For best results, use high-resolution scans (300 DPI or higher).',
     ],
 ];
