@@ -56,7 +56,7 @@ return [
         ],
         'text_direction' => [
             'required' => 'Il campo text_direction è obbligatorio.',
-            'in' => 'Il campo text_direction deve essere uno tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl.',
+            'in' => 'Il campo text_direction deve essere uno tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, ttb.',
         ],
     ],
 
@@ -66,8 +66,8 @@ return [
         'pages' => 'Selezione delle pagine da elaborare dal manifest. Supporta: pagine singole (`1,3,5`), intervalli (`1-10`), o combinazioni (`1-3,7,10-12`). La numerazione parte da 1. Se omesso, elabora le prime 10 pagine di default.',
         'recognition_model_id' => 'ID del modello HTR (Handwritten Text Recognition) o OCR da utilizzare per la trascrizione del testo. Ottieni i modelli disponibili con `GET /api/v1/models` e filtra per `job=recognize`. Il modello deve essere compatibile con il sistema di scrittura del documento.',
         'segmentation_model_id' => 'ID del modello di segmentazione per l\'analisi del layout della pagina (rilevamento righe di testo, regioni, paragrafi). Ottieni i modelli disponibili con `GET /api/v1/models` e filtra per `job=segment`. Se omesso, usa la segmentazione di default di eScriptorium (blla.mlmodel).',
-        'text_direction' => 'Direzione di lettura del testo nel documento. Valori: `horizontal-lr` (sinistra-destra: Latino, Cirillico, Greco), `horizontal-rl` (destra-sinistra: Arabo, Ebraico), `vertical-lr` (alto-basso, colonne sinistra-destra), `vertical-rl` (alto-basso, colonne destra-sinistra: CJK tradizionale).',
-        'document_id' => 'ID (pk) di un documento esistente su eScriptorium. **Funziona solo con API Key eScriptorium (Direct Mode)**. Se fornito, le immagini/manifest verranno aggiunte a questo documento esistente invece di crearne uno nuovo. Utile per aggiungere pagine a un documento esistente. Se omesso o se si usa una Service API Key, viene creato un nuovo documento temporaneo. Restituisce 404 se il documento non esiste, 403 se non accessibile.',
+        'text_direction' => 'Direzione di lettura del testo nel documento. Valori: `horizontal-lr` (sinistra-destra: Latino, Cirillico, Greco), `horizontal-rl` (destra-sinistra: Arabo, Ebraico), `vertical-lr` (alto-basso, colonne sinistra-destra), `vertical-rl` (alto-basso, colonne destra-sinistra: CJK tradizionale), `ttb` (alto-basso). **Obbligatorio a meno che non sia fornito `document_id`** (in tal caso viene recuperato automaticamente dalla impostazione text_direction del main_script del documento).',
+        'document_id' => 'ID (pk) di un documento esistente su eScriptorium. **Funziona solo con API Key eScriptorium (Direct Mode)**. Se fornito, le immagini/manifest verranno aggiunte a questo documento esistente invece di crearne uno nuovo. Utile per aggiungere pagine a un documento esistente. **Nota: quando si usa document_id, i campi `script_id` e `text_direction` vengono ignorati/auto-compilati dai metadati del documento esistente.** Se omesso o se si usa una Service API Key, viene creato un nuovo documento temporaneo. Restituisce 404 se il documento non esiste, 403 se non accessibile.',
         'images' => 'Array di file immagine da trascrivere. Formati supportati: JPEG, PNG, TIFF, BMP, GIF. Dimensione massima: 20MB per file. Le immagini vengono elaborate nell\'ordine in cui sono caricate. Per risultati ottimali, usare scansioni ad alta risoluzione (300 DPI o superiore).',
     ],
 ];

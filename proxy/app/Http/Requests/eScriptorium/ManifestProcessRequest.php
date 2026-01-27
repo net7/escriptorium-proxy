@@ -78,7 +78,7 @@ class ManifestProcessRequest extends FormRequest
             'pages' => ['nullable', 'string', new PagesRange],
             'recognition_model_id' => ['required', 'integer'],
             'segmentation_model_id' => ['nullable', 'integer'],
-            'text_direction' => ['required', 'string', 'in:horizontal-lr,horizontal-rl,vertical-lr,vertical-rl'],
+            'text_direction' => ['required_without:document_id', 'nullable', 'string', 'in:horizontal-lr,horizontal-rl,vertical-lr,vertical-rl,ttb'],
             'document_id' => ['nullable', 'integer'],
         ];
     }

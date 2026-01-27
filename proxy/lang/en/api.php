@@ -56,7 +56,7 @@ return [
         ],
         'text_direction' => [
             'required' => 'The text_direction field is required.',
-            'in' => 'The text_direction field must be one of: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl.',
+            'in' => 'The text_direction field must be one of: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, ttb.',
         ],
     ],
 
@@ -66,8 +66,8 @@ return [
         'pages' => 'Selection of pages to process from the manifest. Supports: single pages (`1,3,5`), ranges (`1-10`), or combinations (`1-3,7,10-12`). Page numbering starts at 1. If omitted, processes the first 10 pages by default.',
         'recognition_model_id' => 'ID of the HTR (Handwritten Text Recognition) or OCR model to use for text transcription. Retrieve available models with `GET /api/v1/models` and filter by `job=recognize`. The model must be compatible with the document\'s writing system.',
         'segmentation_model_id' => 'ID of the segmentation model for page layout analysis (detecting text lines, regions, paragraphs). Retrieve available models with `GET /api/v1/models` and filter by `job=segment`. If omitted, uses eScriptorium\'s default segmentation (blla.mlmodel).',
-        'text_direction' => 'Reading direction of the text in the document. Values: `horizontal-lr` (left-to-right: Latin, Cyrillic, Greek), `horizontal-rl` (right-to-left: Arabic, Hebrew), `vertical-lr` (top-to-bottom, columns left-to-right), `vertical-rl` (top-to-bottom, columns right-to-left: traditional CJK).',
-        'document_id' => 'ID (pk) of an existing document on eScriptorium. **Only works with eScriptorium API Key (Direct Mode)**. When provided, images/manifest will be added to this existing document instead of creating a new one. Useful for adding pages to an existing document. If omitted or if using a Service API Key, a new temporary document is created. Returns 404 if the document does not exist, 403 if not accessible.',
+        'text_direction' => 'Reading direction of the text in the document. Values: `horizontal-lr` (left-to-right: Latin, Cyrillic, Greek), `horizontal-rl` (right-to-left: Arabic, Hebrew), `vertical-lr` (top-to-bottom, columns left-to-right), `vertical-rl` (top-to-bottom, columns right-to-left: traditional CJK), `ttb` (top-to-bottom). **Required unless `document_id` is provided** (in which case it is automatically retrieved from the document\'s main_script text_direction setting).',
+        'document_id' => 'ID (pk) of an existing document on eScriptorium. **Only works with eScriptorium API Key (Direct Mode)**. When provided, images/manifest will be added to this existing document instead of creating a new one. Useful for adding pages to an existing document. **Note: when using document_id, the fields `script_id` and `text_direction` are ignored/auto-filled from the existing document metadata.** If omitted or if using a Service API Key, a new temporary document is created. Returns 404 if the document does not exist, 403 if not accessible.',
         'images' => 'Array of image files to transcribe. Supported formats: JPEG, PNG, TIFF, BMP, GIF. Maximum size: 20MB per file. Images are processed in the order they are uploaded. For best results, use high-resolution scans (300 DPI or higher).',
     ],
 ];

@@ -420,6 +420,30 @@ class eScriptoriumController extends Controller
                         'pk' => null,
                         'name' => null,
                     ];
+
+                    // Extract text_direction from the document's main_script
+                    // The Script model has text_direction: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, ttb
+                    // The Document's read_direction (ltr/rtl) is about page order, not text direction
+                    $mainScriptName = $escriptoriumDocument['main_script'] ?? null;
+                    if ($mainScriptName) {
+                        // Look up the script to get its text_direction
+                        $scripts = eScriptorium::scripts();
+                        foreach ($scripts as $script) {
+                            if ($script['name'] === $mainScriptName) {
+                                $data['text_direction'] = $script['text_direction'] ?? 'horizontal-lr';
+                                Log::info("📐 [eScriptorium] Using script '{$mainScriptName}' text_direction: {$data['text_direction']}");
+                                break;
+                            }
+                        }
+                    }
+
+                    // Fallback if no script found or no main_script set
+                    if (empty($data['text_direction'])) {
+                        // Use read_direction as a rough approximation (ltr/rtl only)
+                        $readDirection = $escriptoriumDocument['read_direction'] ?? 'ltr';
+                        $data['text_direction'] = $readDirection === 'rtl' ? 'horizontal-rl' : 'horizontal-lr';
+                        Log::info("📐 [eScriptorium] No main_script, using read_direction fallback: {$readDirection} -> {$data['text_direction']}");
+                    }
                 } catch (\Exception $e) {
                     Log::error("❌ [eScriptorium] Failed to get document ID: {$documentId}", ['error' => $e->getMessage()]);
 
