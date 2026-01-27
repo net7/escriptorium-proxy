@@ -67,9 +67,7 @@ return [
         'recognition_model_id' => 'ID del modello HTR/OCR per il riconoscimento testo. Ottenibile da `GET /v1/models` filtrando per `job=recognize`.',
         'segmentation_model_id' => 'ID del modello di segmentazione per l\'analisi layout. Ottenibile da `GET /v1/models` filtrando per `job=segment`. Se omesso, usa il default del sistema.',
         'text_direction' => 'Direzione di lettura del testo: `horizontal-lr` (Latino, Italiano), `horizontal-rl` (Arabo, Ebraico), `vertical-lr`, `vertical-rl` (CJK).',
-        'project_name' => 'Nome del progetto su eScriptorium. Con API Key eScriptorium, il progetto sarà persistente sul tuo account personale e se esiste viene riutilizzato (Find or Create).',
-        'document_name' => 'Nome del documento su eScriptorium. Con API Key eScriptorium, il documento sarà persistente sul tuo account personale e se esiste nel progetto viene riutilizzato.',
-        'transcription_name' => 'Etichetta per il layer di trascrizione generato. Utile per versionamento.',
+        'document_id' => 'ID (pk) di un documento esistente su eScriptorium. Funziona solo con API Key eScriptorium (Direct Mode). Le immagini/manifest verranno aggiunte a questo documento. Se omesso, viene creato un nuovo documento.',
         'images' => 'Array di file immagine da trascrivere. Formati supportati: JPEG, PNG, TIFF. Limite: 20MB per file.',
     ],
 ];

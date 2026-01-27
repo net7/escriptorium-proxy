@@ -263,7 +263,7 @@ File: `proxy/app/Http/Middleware/ValidateApiKey.php`
     │                           │   │                           │
     │ → Usa token utente        │   │ → Usa credenziali servizio│
     │ → Progetto PERSISTENTE    │   │ → Progetto TEMPORANEO     │
-    │ → Find or Create abilitato│   │ → Eliminato a fine processo│
+    │ → document_id per riuso   │   │ → Eliminato a fine processo│
     └───────────────────────────┘   └───────────────────────────┘
                     │                               │
                     └───────────────┬───────────────┘
@@ -295,8 +295,7 @@ Questa struttura JSON viene salvata nel campo `service_data` della tabella `tran
       "text_direction": "horizontal-lr",
       "pages": "1-10",
       "pages_array": [1, 2, 3, ...],
-      "project_name": "My Project",
-      "document_name": "My Document"
+      "document_id": 456
     },
     "project": {
       "pk": 123,

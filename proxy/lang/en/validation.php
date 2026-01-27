@@ -57,18 +57,11 @@ return [
                 'string' => 'The text direction must be a string.',
                 'in' => 'The text direction must be one of: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, or ttb.',
             ],
-            'project_name' => [
-                'string' => 'The project name must be a string.',
-                'max' => 'The project name may not be greater than 255 characters.',
+            'document_id' => [
+                'integer' => 'The document ID must be an integer.',
             ],
-            'document_name' => [
-                'string' => 'The document name must be a string.',
-                'max' => 'The document name may not be greater than 255 characters.',
-            ],
-            'transcription_name' => [
-                'string' => 'The transcription name must be a string.',
-                'max' => 'The transcription name may not be greater than 255 characters.',
-            ],
+            'document_not_found' => 'The specified document was not found.',
+            'document_not_accessible' => 'You do not have permission to access this document.',
         ],
         'status' => [
             'not_found' => 'Transcription not found or not authorized.',

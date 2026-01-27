@@ -44,8 +44,7 @@ class DebugController extends Controller
                         ['name' => 'text_direction', 'type' => 'select', 'required' => true, 'options' => ['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl']],
                         ['name' => 'pages', 'type' => 'text', 'required' => false, 'placeholder' => '1-10 or 1,3,5'],
                         ['name' => 'segmentation_model_id', 'dataType' => 'number', 'required' => false],
-                        ['name' => 'project_name', 'type' => 'text', 'required' => false, 'placeholder' => 'My Project'],
-                        ['name' => 'document_name', 'type' => 'text', 'required' => false, 'placeholder' => 'My Document'],
+                        ['name' => 'document_id', 'dataType' => 'number', 'required' => false, 'description' => 'Existing eScriptorium document ID (Direct Mode only)'],
                     ],
                 ],
                 [
@@ -60,8 +59,7 @@ class DebugController extends Controller
                         ['name' => 'recognition_model_id', 'dataType' => 'number', 'required' => true],
                         ['name' => 'text_direction', 'type' => 'select', 'required' => true, 'options' => ['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl']],
                         ['name' => 'segmentation_model_id', 'dataType' => 'number', 'required' => false],
-                        ['name' => 'project_name', 'type' => 'text', 'required' => false, 'placeholder' => 'My Project'],
-                        ['name' => 'document_name', 'type' => 'text', 'required' => false, 'placeholder' => 'My Document'],
+                        ['name' => 'document_id', 'dataType' => 'number', 'required' => false, 'description' => 'Existing eScriptorium document ID (Direct Mode only)'],
                     ],
                 ],
                 [

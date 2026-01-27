@@ -48,17 +48,9 @@ class ManifestProcessRequest extends FormRequest
                 'description' => __('api.body_parameters.text_direction'),
                 'example' => 'horizontal-lr',
             ],
-            'project_name' => [
-                'description' => __('api.body_parameters.project_name'),
-                'example' => 'Manoscritti Vaticani',
-            ],
-            'document_name' => [
-                'description' => __('api.body_parameters.document_name'),
-                'example' => 'Vat.lat.3225',
-            ],
-            'transcription_name' => [
-                'description' => __('api.body_parameters.transcription_name'),
-                'example' => 'Trascrizione v1.0',
+            'document_id' => [
+                'description' => __('api.body_parameters.document_id'),
+                'example' => 456,
             ],
         ];
     }
@@ -74,9 +66,7 @@ class ManifestProcessRequest extends FormRequest
             'source_type' => 'manifest',
             'segmentation_model_id' => $this->segmentation_model_id === '' ? null : $this->segmentation_model_id,
             'pages' => $this->pages === '' ? null : $this->pages,
-            'project_name' => $this->project_name === '' ? null : $this->project_name,
-            'document_name' => $this->document_name === '' ? null : $this->document_name,
-            'transcription_name' => $this->transcription_name === '' ? null : $this->transcription_name,
+            'document_id' => $this->document_id === '' ? null : $this->document_id,
         ]);
     }
 
@@ -89,9 +79,7 @@ class ManifestProcessRequest extends FormRequest
             'recognition_model_id' => ['required', 'integer'],
             'segmentation_model_id' => ['nullable', 'integer'],
             'text_direction' => ['required', 'string', 'in:horizontal-lr,horizontal-rl,vertical-lr,vertical-rl'],
-            'project_name' => ['nullable', 'string', 'max:255'],
-            'document_name' => ['nullable', 'string', 'max:255'],
-            'transcription_name' => ['nullable', 'string', 'max:255'],
+            'document_id' => ['nullable', 'integer'],
         ];
     }
 

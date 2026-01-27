@@ -406,37 +406,58 @@ class eScriptoriumController extends Controller
         try {
             $escriptoriumProject = null;
             $escriptoriumDocument = null;
+            $documentId = $data['document_id'] ?? null;
 
-            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument, $isApiKey) {
-                $projectName = $data['project_name'] ?? null;
-                $documentName = $data['document_name'] ?? null;
+            // VALIDATE document_id BEFORE transaction (Direct Mode only)
+            if ($isApiKey && $documentId) {
+                try {
+                    $escriptoriumDocument = eScriptorium::getDocument((string) $documentId);
+                    Log::info("♻️ [eScriptorium] Using existing document ID: {$documentId} (Name: {$escriptoriumDocument['name']})");
 
-                // PROJECT HANDLING
-                if ($isApiKey && $projectName) {
-                    $existingProjects = eScriptorium::getProjects($projectName);
-                    if (! empty($existingProjects)) {
-                        $escriptoriumProject = $existingProjects[0];
-                        Log::info("♻️ [eScriptorium] Reusing existing project: {$projectName} (PK: {$escriptoriumProject['pk']})");
+                    // Project info is implicit in the document
+                    $escriptoriumProject = [
+                        'slug' => $escriptoriumDocument['project'] ?? null,
+                        'pk' => null,
+                        'name' => null,
+                    ];
+                } catch (\Exception $e) {
+                    Log::error("❌ [eScriptorium] Failed to get document ID: {$documentId}", ['error' => $e->getMessage()]);
+
+                    // Check if it's a 404 (not found) or 403 (forbidden) based on error message
+                    $errorMessage = $e->getMessage();
+                    if (str_contains($errorMessage, '404') || str_contains($errorMessage, 'Not found')) {
+                        return response()->json([
+                            'message' => __('validation.escriptorium.process.document_not_found'),
+                            'error' => "Document with ID {$documentId} not found",
+                            'status' => 404,
+                        ], 404);
                     }
-                }
 
-                if (! $escriptoriumProject) {
-                    $projectName = $projectName ?? Str::random(16);
+                    if (str_contains($errorMessage, '403') || str_contains($errorMessage, 'Forbidden')) {
+                        return response()->json([
+                            'message' => __('validation.escriptorium.process.document_not_accessible'),
+                            'error' => "Document with ID {$documentId} is not accessible with your credentials",
+                            'status' => 403,
+                        ], 403);
+                    }
+
+                    // Generic error for other cases
+                    return response()->json([
+                        'message' => __('validation.escriptorium.process.document_not_found'),
+                        'error' => "Document with ID {$documentId} not found or not accessible",
+                        'status' => 404,
+                    ], 404);
+                }
+            }
+
+            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument) {
+                // CREATE NEW PROJECT AND DOCUMENT if not using existing document
+                if (! $escriptoriumDocument) {
+                    $projectName = Str::random(16);
                     $escriptoriumProject = eScriptorium::createProject($projectName);
                     Log::info("✨ [eScriptorium] Created new project: {$projectName}");
-                }
 
-                // DOCUMENT HANDLING
-                if ($isApiKey && $documentName && isset($escriptoriumProject['pk'])) {
-                    $existingDocs = eScriptorium::getDocuments($escriptoriumProject['pk'], $documentName);
-                    if (! empty($existingDocs)) {
-                        $escriptoriumDocument = $existingDocs[0];
-                        Log::info("♻️ [eScriptorium] Reusing existing document: {$documentName} (PK: {$escriptoriumDocument['pk']})");
-                    }
-                }
-
-                if (! $escriptoriumDocument) {
-                    $documentName = $documentName ?? Str::random(16);
+                    $documentName = Str::random(16);
                     $escriptoriumDocument = eScriptorium::createDocument(
                         $documentName,
                         $escriptoriumProject['slug'],
@@ -450,7 +471,7 @@ class eScriptoriumController extends Controller
                         'request' => $data,
                         'project' => $escriptoriumProject,
                         'document' => $escriptoriumDocument,
-                        'transcription_name' => $data['transcription_name'] ?? null,
+                        'transcription_name' => Str::random(16),
                     ],
                 ];
 

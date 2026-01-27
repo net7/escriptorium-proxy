@@ -67,9 +67,7 @@ return [
         'recognition_model_id' => 'HTR/OCR model ID for text recognition. Get from `GET /v1/models` filtering by `job=recognize`.',
         'segmentation_model_id' => 'Segmentation model ID for layout analysis. Get from `GET /v1/models` filtering by `job=segment`. Uses system default if omitted.',
         'text_direction' => 'Text reading direction: `horizontal-lr` (Latin), `horizontal-rl` (Arabic, Hebrew), `vertical-lr`, `vertical-rl` (CJK).',
-        'project_name' => 'Project name on eScriptorium. With API Key eScriptorium, the project will be persistent on your personal account and reuses existing if found (Find or Create).',
-        'document_name' => 'Document name on eScriptorium. With API Key eScriptorium, the document will be persistent on your personal account and reuses existing in project if found.',
-        'transcription_name' => 'Label for the generated transcription layer. Useful for versioning.',
+        'document_id' => 'Existing eScriptorium document ID (pk). Only works with eScriptorium API Key (Direct Mode). Images/manifest will be added to this document. If omitted, a new document is created.',
         'images' => 'Array of image files to transcribe. Supported formats: JPEG, PNG, TIFF. Limit: 20MB per file.',
     ],
 ];

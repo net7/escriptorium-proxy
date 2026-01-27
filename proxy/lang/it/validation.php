@@ -57,18 +57,11 @@ return [
                 'string' => 'La direzione del testo deve essere una stringa.',
                 'in' => 'La direzione del testo deve essere una tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl o ttb.',
             ],
-            'project_name' => [
-                'string' => 'Il nome del progetto deve essere una stringa.',
-                'max' => 'Il nome del progetto non può superare i 255 caratteri.',
+            'document_id' => [
+                'integer' => 'L\'ID del documento deve essere un numero intero.',
             ],
-            'document_name' => [
-                'string' => 'Il nome del documento deve essere una stringa.',
-                'max' => 'Il nome del documento non può superare i 255 caratteri.',
-            ],
-            'transcription_name' => [
-                'string' => 'Il nome della trascrizione deve essere una stringa.',
-                'max' => 'Il nome della trascrizione non può superare i 255 caratteri.',
-            ],
+            'document_not_found' => 'Il documento specificato non è stato trovato.',
+            'document_not_accessible' => 'Non hai i permessi per accedere a questo documento.',
         ],
         'status' => [
             'not_found' => 'Trascrizione non trovata o non autorizzata.',
