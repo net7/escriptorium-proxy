@@ -24,6 +24,11 @@ class eScriptoriumService
 
     private readonly int $cacheTtl;
 
+    /**
+     * Session ID creato per Direct Mode WebSocket (da eliminare dopo l'uso).
+     */
+    private ?string $directModeSessionId = null;
+
     private const MODEL_TYPE_PREFIX_STRING = '"model_type": "';
 
     private const MODEL_TYPE_POSTFIX_STRING = '"';
@@ -114,6 +119,9 @@ class eScriptoriumService
                 throw new \RuntimeException('Could not create Django session for WebSocket authentication in Direct Mode');
             }
 
+            // Store for cleanup after WebSocket use
+            $this->directModeSessionId = $sessionId;
+
             Log::debug('eScriptoriumService: Created Django session for Direct Mode WebSocket', [
                 'session_id' => substr($sessionId, 0, 8).'...',
             ]);
@@ -196,6 +204,24 @@ class eScriptoriumService
         $client->setTimeout($timeoutSec);
 
         return $client;
+    }
+
+    /**
+     * Clean up the Django session created for Direct Mode WebSocket.
+     *
+     * Should be called after the WebSocket connection is closed.
+     * Only deletes sessions created by this service in Direct Mode.
+     */
+    public function cleanupDirectModeSession(): void
+    {
+        if ($this->directModeSessionId === null) {
+            return;
+        }
+
+        $djangoSessionService = new DjangoSessionService;
+        $djangoSessionService->deleteSession($this->directModeSessionId);
+
+        $this->directModeSessionId = null;
     }
 
     /**

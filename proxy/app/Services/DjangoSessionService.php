@@ -187,4 +187,35 @@ class DjangoSessionService
     {
         return Str::lower(Str::random(32));
     }
+
+    /**
+     * Elimina una sessione Django dal database.
+     *
+     * @param  string  $sessionKey  Il session_key da eliminare
+     * @return bool True se la sessione è stata eliminata
+     */
+    public function deleteSession(string $sessionKey): bool
+    {
+        try {
+            $deleted = DB::connection('escriptorium')
+                ->table('django_session')
+                ->where('session_key', $sessionKey)
+                ->delete();
+
+            if ($deleted) {
+                Log::debug('DjangoSessionService: Session deleted', [
+                    'session_key' => substr($sessionKey, 0, 8).'...',
+                ]);
+            }
+
+            return $deleted > 0;
+        } catch (\Exception $e) {
+            Log::warning('DjangoSessionService: Failed to delete session', [
+                'session_key' => substr($sessionKey, 0, 8).'...',
+                'error' => $e->getMessage(),
+            ]);
+
+            return false;
+        }
+    }
 }

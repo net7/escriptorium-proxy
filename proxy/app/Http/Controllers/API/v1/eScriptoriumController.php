@@ -391,9 +391,9 @@ class eScriptoriumController extends Controller
     {
         $apiKey = $request->attributes->get('api_key');
         $isApiKey = data_get($request, 'is_escriptorium_api_key', false);
-        $escriptoriumToken = data_get($request, 'escriptorium_token');
+        $directModeToken = data_get($request, 'direct_mode_token');
 
-        if (! $escriptoriumToken) {
+        if (! $directModeToken) {
             // Fallback or Error
         }
 
@@ -521,7 +521,7 @@ class eScriptoriumController extends Controller
 
                 return Transcription::create([
                     'api_key_id' => $apiKey->id,
-                    'escriptorium_token' => $escriptoriumToken,
+                    'direct_mode_token' => $directModeToken,
                     'script_name' => $data['script_name'],
                     'manifest_url' => $data['manifest_url'] ?? null,
                     'pages' => $data['pages'] ?? null,

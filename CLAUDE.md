@@ -157,7 +157,7 @@ proxy/
 │   │   └── DjangoSessionService.php          # Crea sessioni Django per WebSocket
 │   │
 │   ├── Models/
-│   │   ├── Transcription.php    # Traccia stato processo
+│   │   ├── Transcription.php    # Traccia stato processo (direct_mode_token encrypted)
 │   │   └── ApiKey.php           # Gestione API keys
 │   │
 │   └── Contexts/
@@ -278,7 +278,7 @@ File: `proxy/app/Http/Middleware/ValidateApiKey.php`
                     │ Request Logging (opzionale)   │
                     │ Bind api_key a Request        │
                     │ Merge is_escriptorium_api_key │
-                    │ Merge escriptorium_token      │
+                    │ Merge direct_mode_token       │
                     └───────────────────────────────┘
 ```
 
@@ -539,6 +539,7 @@ In Direct Mode abbiamo solo il token API dell'utente, non le sue credenziali. Pe
    - Codifica session data nel formato Django
    - Inserisce in `django_session`
 2. Connetti WebSocket con `Cookie: sessionid={session_key_creato}`
+3. Dopo la disconnessione: `eScriptoriumService::cleanupDirectModeSession()` elimina la sessione (one-shot)
 
 **Messaggi monitorati**:
 ```json
@@ -605,6 +606,10 @@ $alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 ],
 ```
 
+**Metodi**:
+- `createSessionForToken($apiToken)` → crea sessione, ritorna `session_key`
+- `deleteSession($sessionKey)` → elimina sessione dal DB
+
 **IMPORTANTE**: `ESCRIPTORIUM_DJANGO_SECRET_KEY` DEVE corrispondere a `SECRET_KEY` in `escriptorium/variables.env`.
 
 ## eScriptoriumService: Metodi Principali
@@ -615,6 +620,7 @@ $alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 | `getCurrentToken()` | Token corrente (service o direct) | ✅ |
 | `getSessionCookie()` | Session Django per WebSocket | ✅ |
 | `createWebSocketClient(timeout)` | Client WebSocket configurato | ✅ |
+| `cleanupDirectModeSession()` | Elimina sessione Direct Mode | ✅ |
 | `models()` | Lista modelli OCR | ✅ |
 | `scripts()` | Lista sistemi scrittura | ✅ |
 | `createProject(name)` | Crea progetto | ✅ |
@@ -658,3 +664,4 @@ $alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 - `getOrCreateVirtualApiKey` crea una ApiKey Laravel "virtuale" per tracciare rate limit e log anche per token eScriptorium diretti
 - **CRITICO**: `ESCRIPTORIUM_DJANGO_SECRET_KEY` deve corrispondere a `SECRET_KEY` di Django per la creazione di sessioni WebSocket in Direct Mode
 - In Direct Mode, il WebSocket viene autenticato creando una sessione Django direttamente in PostgreSQL (via `DjangoSessionService`)
+- Il campo `direct_mode_token` nella tabella `transcriptions` è **cifrato** (Laravel `encrypted` cast) - il token API non è mai salvato in chiaro

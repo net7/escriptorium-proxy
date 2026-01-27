@@ -14,7 +14,7 @@ class Transcription extends Model
 
     protected $fillable = [
         'api_key_id',
-        'escriptorium_token',
+        'direct_mode_token',
         'script_name',
         'manifest_url',
         'pages',
@@ -33,6 +33,7 @@ class Transcription extends Model
             'segmentation_model_id' => 'integer',
             'service_data' => 'array',
             'status' => eScriptoriumStatusEnum::class,
+            'direct_mode_token' => 'encrypted',
         ];
     }
 

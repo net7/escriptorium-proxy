@@ -6,6 +6,7 @@ use App\Enums\eScriptoriumStatusEnum;
 use App\Facades\eScriptorium;
 use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
+use App\Services\eScriptoriumService;
 use App\Services\eScriptoriumServiceDataManager;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -61,6 +62,11 @@ class eScriptoriumDownloadJob implements ShouldQueue
     private eScriptoriumServiceDataManager $dataManager;
 
     /**
+     * Servizio eScriptorium (per cleanup sessione Direct Mode).
+     */
+    private ?eScriptoriumService $escriptoriumService = null;
+
+    /**
      * Crea una nuova istanza del job.
      */
     public function __construct(private Transcription $transcription) {}
@@ -112,7 +118,9 @@ class eScriptoriumDownloadJob implements ShouldQueue
             // ============================================================
             // STEP 3: Connetti al WebSocket
             // ============================================================
-            $wsClient = eScriptorium::createWebSocketClient();
+            // Use service instance directly to track Direct Mode session for cleanup
+            $this->escriptoriumService = new eScriptoriumService;
+            $wsClient = $this->escriptoriumService->createWebSocketClient();
 
             Log::info('🔌 [eScriptorium] WebSocket connected', [
                 'transcription_id' => $this->transcription->id,
@@ -222,6 +230,11 @@ class eScriptoriumDownloadJob implements ShouldQueue
                 } catch (\Exception $e) {
                     // Ignora errori di chiusura
                 }
+            }
+
+            // Cleanup Direct Mode session (one-shot, non serve più)
+            if ($this->escriptoriumService) {
+                $this->escriptoriumService->cleanupDirectModeSession();
             }
         }
     }

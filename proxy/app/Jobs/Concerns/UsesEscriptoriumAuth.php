@@ -37,13 +37,13 @@ trait UsesEscriptoriumAuth
     /**
      * Configura il context di autenticazione basandosi sulla Transcription.
      *
-     * Se la transcription ha un token eScriptorium salvato, lo usa.
+     * Se la transcription ha un token Direct Mode salvato, lo usa.
      * Altrimenti usa l'autenticazione del servizio.
      */
     protected function setupEscriptoriumAuth(Transcription $transcription): void
     {
-        if ($transcription->escriptorium_token) {
-            ApiContext::setDirectToken($transcription->escriptorium_token);
+        if ($transcription->direct_mode_token) {
+            ApiContext::setDirectToken($transcription->direct_mode_token);
         } else {
             ApiContext::setServiceAuth();
         }

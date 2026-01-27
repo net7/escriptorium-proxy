@@ -126,7 +126,7 @@ class ValidateApiKey
         // Execute the request
         $response = $next($request->merge([
             'is_escriptorium_api_key' => $isEscriptoriumDirect,
-            'escriptorium_token' => $escriptoriumToken,
+            'direct_mode_token' => $escriptoriumToken,
         ]));
 
         // Record response metrics
