@@ -132,6 +132,18 @@ class eScriptoriumDownloadJob implements ShouldQueue
                 'document_id' => $documentId,
             ]);
 
+            // Add some delay to ensure the room is fully joined
+            $seconds = 3;
+            Log::info("💤 [eScriptorium] Waiting $seconds seconds for room to be fully joined", [
+                'transcription_id' => $this->transcription->id,
+                'document_id' => $documentId,
+            ]);
+            sleep($seconds);
+            Log::info('⏰ [eScriptorium] Room fully joined', [
+                'transcription_id' => $this->transcription->id,
+                'document_id' => $documentId,
+            ]);
+
             // ============================================================
             // STEP 5: Lancia l'export TEI via API
             // ============================================================
@@ -232,22 +244,61 @@ class eScriptoriumDownloadJob implements ShouldQueue
 
     /**
      * Attende il messaggio WebSocket con il link di download.
+     *
+     * In Service Mode: receives 'message' type notification with links directly
+     * In Direct Mode: receives 'export:done' event, then constructs the download URL
      */
     private function waitForDownloadLink(Client $wsClient): ?string
     {
-        $timeout = config('escriptorium.websocket.timeout', 600);
+        $timeout = config('escriptorium.websocket.timeout', 60);
         $startTime = time();
+
+        // Get user info for Direct Mode URL construction
+        $userPk = null;
+        $documentName = $this->dataManager->getDocumentName();
+
+        if ($this->isDirectMode()) {
+            try {
+                $currentUser = eScriptorium::getCurrentUser();
+                $userPk = $currentUser['pk'] ?? null;
+                Log::info('👤 [eScriptorium] Current user for export', [
+                    'transcription_id' => $this->transcription->id,
+                    'user_pk' => $userPk,
+                    'document_name' => $documentName,
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('⚠️ [eScriptorium] Could not get current user', [
+                    'transcription_id' => $this->transcription->id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        Log::info('🔍 [eScriptorium] Waiting for download link', [
+            'transcription_id' => $this->transcription->id,
+            'timeout' => $timeout,
+            'is_direct_mode' => $this->isDirectMode(),
+        ]);
 
         while ((time() - $startTime) < $timeout) {
             try {
                 $message = $wsClient->receive();
-                $data = json_decode($message->getContent(), true);
+                $content = $message->getContent();
+                $data = json_decode($content, true);
+
+                Log::debug('📨 [eScriptorium] WebSocket message received', [
+                    'transcription_id' => $this->transcription->id,
+                    'raw_content' => substr($content, 0, 500),
+                    'type' => $data['type'] ?? 'unknown',
+                    'name' => $data['name'] ?? null,
+                    'text' => $data['text'] ?? null,
+                ]);
 
                 if (! $data) {
                     continue;
                 }
 
-                // Cerca il messaggio di notifica con "Export done!"
+                // Option 1: Notification message with links (Service Mode)
                 if (($data['type'] ?? '') === 'message' &&
                     str_contains($data['text'] ?? '', 'Export done')) {
 
@@ -257,9 +308,40 @@ class eScriptoriumDownloadJob implements ShouldQueue
                     }
                 }
 
-                // Controlla anche per errori
+                // Option 2: Export done event (Direct Mode) - construct URL from pattern
                 if (($data['type'] ?? '') === 'event' &&
-                    ($data['name'] ?? '') === 'export:error') {
+                    ($data['name'] ?? '') === 'export:done') {
+
+                    Log::info('✅ [eScriptorium] Export done event received', [
+                        'transcription_id' => $this->transcription->id,
+                        'data' => $data['data'] ?? [],
+                    ]);
+
+                    // In Direct Mode, construct the download URL
+                    // Pattern: /media/users/{user_pk}/{document_name}_export.zip
+                    if ($userPk && $documentName) {
+                        $downloadUrl = "/media/users/{$userPk}/{$documentName}_export.zip";
+                        Log::info('🔗 [eScriptorium] Constructed download URL from export:done event', [
+                            'transcription_id' => $this->transcription->id,
+                            'download_url' => $downloadUrl,
+                        ]);
+
+                        return $downloadUrl;
+                    }
+
+                    // Fallback: try common pattern if we have at least user_pk
+                    if ($userPk) {
+                        $downloadUrl = "/media/users/{$userPk}/";
+                        Log::warning('⚠️ [eScriptorium] Export done but document name unknown, using partial URL', [
+                            'transcription_id' => $this->transcription->id,
+                            'partial_url' => $downloadUrl,
+                        ]);
+                    }
+                }
+
+                // Error handling
+                if (($data['type'] ?? '') === 'event' &&
+                    (($data['name'] ?? '') === 'export:error' || ($data['name'] ?? '') === 'import:error')) {
                     $reason = $data['data']['reason'] ?? 'Unknown export error';
                     throw new \RuntimeException("Export failed: {$reason}");
                 }
@@ -267,11 +349,20 @@ class eScriptoriumDownloadJob implements ShouldQueue
             } catch (\Exception $e) {
                 // Timeout or other WebSocket error, continue the loop
                 if (str_contains($e->getMessage(), 'timeout') || str_contains(strtolower($e->getMessage()), 'timed out')) {
+                    Log::debug('⏳ [eScriptorium] WebSocket receive timeout, continuing...', [
+                        'transcription_id' => $this->transcription->id,
+                        'elapsed' => time() - $startTime,
+                    ]);
                     continue;
                 }
                 throw $e;
             }
         }
+
+        Log::warning('⚠️ [eScriptorium] WebSocket timeout reached without receiving download link', [
+            'transcription_id' => $this->transcription->id,
+            'elapsed' => time() - $startTime,
+        ]);
 
         return null;
     }

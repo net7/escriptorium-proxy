@@ -43,9 +43,12 @@ return [
     'websocket' => [
         'base_url' => env('ESCRIPTORIUM_WEBSOCKET_BASE_URL', null), // If null, uses api.base_url
         'endpoint' => env('ESCRIPTORIUM_WEBSOCKET_ENDPOINT', 'ws/notif/'),
-        'timeout' => env('ESCRIPTORIUM_WEBSOCKET_TIMEOUT', 600),
+        'timeout' => env('ESCRIPTORIUM_WEBSOCKET_TIMEOUT', 60),
     ],
     'media' => [
         'base_url' => env('ESCRIPTORIUM_MEDIA_BASE_URL', null), // If null, uses websocket.base_url or api.base_url
+    ],
+    'django' => [
+        'secret_key' => env('ESCRIPTORIUM_DJANGO_SECRET_KEY', 'changeme'),
     ],
 ];

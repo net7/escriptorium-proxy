@@ -29,7 +29,7 @@ class eScriptoriumUploadImagesJob implements ShouldQueue
 
     public array $backoff = [30, 60, 120];
 
-    public int $timeout = 600; // 10 minutes for slow uploads
+    public int $timeout = 180; // 3 minutes for slow uploads
 
     private eScriptoriumServiceDataManager $dataManager;
 

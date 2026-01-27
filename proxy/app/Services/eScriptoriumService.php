@@ -96,12 +96,32 @@ class eScriptoriumService
     /**
      * Get a Django session cookie for WebSocket authentication.
      *
+     * In Direct Mode, creates a Django session directly in PostgreSQL for the user's API token.
+     * In Service Mode, logs in with service account credentials.
+     *
      * @return string The session ID
      *
      * @throws \RuntimeException If authentication fails
      */
     public function getSessionCookie(): string
     {
+        // In Direct Mode, create session directly from the user's API token
+        if (ApiContext::isDirectMode()) {
+            $djangoSessionService = new DjangoSessionService;
+            $sessionId = $djangoSessionService->createSessionForToken(ApiContext::getDirectToken());
+
+            if (! $sessionId) {
+                throw new \RuntimeException('Could not create Django session for WebSocket authentication in Direct Mode');
+            }
+
+            Log::debug('eScriptoriumService: Created Django session for Direct Mode WebSocket', [
+                'session_id' => substr($sessionId, 0, 8).'...',
+            ]);
+
+            return $sessionId;
+        }
+
+        // Service Mode: login with service account credentials
         // Prima richiesta per ottenere CSRF token
         $loginPageResponse = Http::get("{$this->baseUrl}/login/");
         $cookies = $loginPageResponse->cookies();
@@ -210,6 +230,24 @@ class eScriptoriumService
 
         return Http::baseUrl($this->baseUrl)
             ->withToken($token, config('escriptorium.api.headers.token_header'));
+    }
+
+    /**
+     * Get the current authenticated user info from eScriptorium.
+     *
+     * @return array User info (pk, username, email, etc.)
+     *
+     * @throws \RuntimeException If the request fails
+     */
+    public function getCurrentUser(): array
+    {
+        $response = $this->client()->get('api/users/current/');
+
+        if (! $response->successful()) {
+            throw new \RuntimeException('eScriptorium get current user request failed: '.$response->body());
+        }
+
+        return $response->json();
     }
 
     /**

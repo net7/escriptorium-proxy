@@ -145,6 +145,16 @@ class eScriptoriumServiceDataManager
     }
 
     /**
+     * Recupera il nome del documento eScriptorium.
+     *
+     * @return string|null Nome del documento
+     */
+    public function getDocumentName(): ?string
+    {
+        return $this->getData()['document']['name'] ?? null;
+    }
+
+    /**
      * Recupera gli ID dei tipi di regione validi per il documento.
      *
      * @return array ID dei tipi di regione validi (come stringhe)
