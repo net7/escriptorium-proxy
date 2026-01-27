@@ -14,6 +14,8 @@ export default function EndpointCard({
     scripts = [],
     recognitionModels = [],
     segmentationModels = [],
+    onRefreshModels,
+    loadingModels = false,
     onTranscriptionCreated,
     autoFillTranscriptionId,
     shouldStartPolling,
@@ -137,6 +139,8 @@ export default function EndpointCard({
                                 scripts={scripts}
                                 recognitionModels={recognitionModels}
                                 segmentationModels={segmentationModels}
+                                onRefreshModels={onRefreshModels}
+                                loadingModels={loadingModels}
                             />
                         ))}
                     </fieldset>

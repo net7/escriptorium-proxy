@@ -8,6 +8,7 @@ export default function Debug({ endpoints }) {
     const [scripts, setScripts] = useState([]);
     const [models, setModels] = useState([]);
     const [loadingData, setLoadingData] = useState(false);
+    const [loadingModels, setLoadingModels] = useState(false);
 
     // Shared state for auto-polling
     const [activeTranscriptionId, setActiveTranscriptionId] = useState(null);
@@ -15,6 +16,24 @@ export default function Debug({ endpoints }) {
 
     // Ref to scroll to status endpoint
     const statusEndpointRef = useRef(null);
+
+    // Function to refresh only models
+    const refreshModels = async () => {
+        if (!apiKey) return;
+
+        setLoadingModels(true);
+        try {
+            const modelsRes = await fetch('/api/v1/models', { headers: { 'X-API-Key': apiKey } });
+            if (modelsRes.ok) {
+                const modelsData = await modelsRes.json();
+                setModels(modelsData.results || modelsData || []);
+            }
+        } catch (error) {
+            console.error('Failed to refresh models:', error);
+        } finally {
+            setLoadingModels(false);
+        }
+    };
 
     // Fetch scripts and models when API key is set
     useEffect(() => {
@@ -127,6 +146,8 @@ export default function Debug({ endpoints }) {
                                     scripts={scripts}
                                     recognitionModels={recognitionModels}
                                     segmentationModels={segmentationModels}
+                                    onRefreshModels={refreshModels}
+                                    loadingModels={loadingModels}
                                     onTranscriptionCreated={endpoint.autoPolling ? handleTranscriptionCreated : undefined}
                                     autoFillTranscriptionId={isStatusEndpoint ? activeTranscriptionId : null}
                                     shouldStartPolling={isStatusEndpoint ? shouldStartPolling : false}
