@@ -474,7 +474,7 @@ class eScriptoriumController extends Controller
                 }
             }
 
-            $transcription = DB::transaction(function () use ($apiKey, $escriptoriumToken, $data, &$escriptoriumProject, &$escriptoriumDocument) {
+            $transcription = DB::transaction(function () use ($apiKey, $directModeToken, $data, &$escriptoriumProject, &$escriptoriumDocument) {
                 // CREATE NEW PROJECT AND DOCUMENT if not using existing document
                 if (! $escriptoriumDocument) {
                     $projectName = Str::random(16);
