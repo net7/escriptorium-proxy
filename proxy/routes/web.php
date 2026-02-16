@@ -7,6 +7,6 @@ use Illuminate\Support\Facades\Route;
 Route::view('/', 'scalar');
 
 // Debug Console (local and staging environment only)
-Route::middleware(['local', 'staging'])->group(function () {
+Route::middleware('env:development')->group(function () {
     Route::get('/debug', [DebugController::class, 'index']);
 });
