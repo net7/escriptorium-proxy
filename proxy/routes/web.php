@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Route;
 // Scalar API Reference (Default Documentation)
 Route::view('/', 'scalar');
 
-// Debug Console (local environment only)
-Route::middleware(['local'])->group(function () {
+// Debug Console (local and staging environment only)
+Route::middleware(['local', 'staging'])->group(function () {
     Route::get('/debug', [DebugController::class, 'index']);
 });
