@@ -26,7 +26,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'api.key' => \App\Http\Middleware\ValidateApiKey::class,
-            'local' => \App\Http\Middleware\EnsureLocalEnvironment::class,
+            'env' => \App\Http\Middleware\EnsureEnvironment::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
