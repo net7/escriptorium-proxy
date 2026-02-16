@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\eScriptoriumController;
+use App\Http\Controllers\API\v1\eScriptoriumController;
 use Illuminate\Support\Facades\Route;
 
 /*

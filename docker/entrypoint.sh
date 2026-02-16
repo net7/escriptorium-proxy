@@ -79,7 +79,7 @@ php artisan migrate --force
 
 # Run seeders
 echo "🌱 Running seeders..."
-php artisan db:seed
+php artisan db:seed --force
 
 # Create storage link if not exists
 if [ ! -L "public/storage" ]; then

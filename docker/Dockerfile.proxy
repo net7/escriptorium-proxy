@@ -17,7 +17,8 @@ RUN apk add --no-cache \
     icu-dev \
     mariadb-client \
     postgresql-dev \
-    supervisor
+    supervisor \
+    fcgi
 
 # Install PHP extensions
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
@@ -113,9 +114,10 @@ COPY proxy/ .
 # Generate optimized autoloader
 RUN composer dump-autoload --optimize --classmap-authoritative
 
-# Build assets with Bun
-RUN bun install --production \
-    && bun run build
+# Build assets with Bun (need devDependencies for vite)
+RUN bun install \
+    && bun run build \
+    && rm -rf node_modules
 
 # PHP configuration for production
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
