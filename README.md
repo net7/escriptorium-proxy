@@ -1,37 +1,429 @@
-eScriptorium is part of the [Scripta](https://www.psl.eu/en/scripta), [RESILIENCE](https://www.resilience-ri.eu) and [Biblissima+](https://projet.biblissima.fr/) projects, and has received funding from Université PSL and from The European Union's [Horizon 2020 Research and Innovation Programme](https://ec.europa.eu/programmes/horizon2020/en/what-horizon-2020) under Grant Agreement no. 871127, from the Programme d'investissements d'avenir of the [Agence Nationale de Recheche](https://anr.fr/fr/france-2030/france-2030/) under Grant Reference no. ANR-21-ESRE-0005, as well as from other contributors listed below. Its goal is provide researchers in the humanities with an integrated set of tools to transcribe, annotate, translate and publish historical documents.
-The eScriptorium app itself is at the 'center'. It is a work in progress but will implement at least automatic transcriptions through kraken, indexation for complex search and filtering, annotation and some simple forms of collaborative working such as sharing and versioning.
+# eScriptorium Proxy
 
-## The stack
-- nginx
-- uwsgi
-- [django](https://www.djangoproject.com/)
-- [daphne](https://github.com/django/daphne) (channel server for websockets)
-- [celery](http://www.celeryproject.org/)
-- postgres
-- [elasticsearch](https://www.elastic.co/)
-- redis (cache, celery broker, other disposable data)
-- [kraken](http://kraken.re)
-- [docker](https://www.docker.com/) (deployment)
+A Laravel-based proxy application that wraps [eScriptorium](https://gitlab.com/scripta/escriptorium), providing a modern API layer and enhanced functionality for document processing and OCR/HTR workflows.
 
+## Architecture Overview
 
-## Install
-Two options,
-- [install with Docker](https://gitlab.com/scripta/escriptorium/-/wikis/docker-install), or a
-- [full local install](https://gitlab.com/scripta/escriptorium/-/wikis/full-install).
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         NGINX (port 8080)                           │
+│                      Reverse Proxy / Load Balancer                  │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+              ┌───────────────┴───────────────┐
+              │                               │
+              ▼                               ▼
+┌─────────────────────────┐     ┌─────────────────────────────────────┐
+│     Laravel Proxy       │     │         eScriptorium                │
+│     (PHP-FPM)           │     │  ┌─────────────────────────────┐    │
+│                         │     │  │  escriptorium-nginx (:8082) │    │
+│  ┌───────────────────┐  │     │  └──────────┬──────────────────┘    │
+│  │   MariaDB         │  │     │             │                       │
+│  │   (Laravel DB)    │  │     │  ┌──────────┴──────────┐            │
+│  └───────────────────┘  │     │  │                     │            │
+│                         │     │  ▼                     ▼            │
+│  ┌───────────────────┐  │     │  escriptorium-web    escriptorium-ws│
+│  │   Queue Worker    │  │     │  (uWSGI :8000)       (Daphne :5000) │
+│  └───────────────────┘  │     │                                     │
+└─────────────────────────┘     │  ┌─────────────────────────────┐    │
+                                │  │   PostgreSQL                │    │
+              ┌─────────────────┤  │   (eScriptorium DB)         │    │
+              │                 │  └─────────────────────────────┘    │
+              ▼                 │                                     │
+┌─────────────────────────┐     │  ┌─────────────────────────────┐    │
+│        Redis            │◄────┤  │   Celery Workers            │    │
+│   (Cache/Queue/Session) │     │  │   - celery-main             │    │
+└─────────────────────────┘     │  │   - celery-gpu              │    │
+                                │  │   - celery-low-priority     │    │
+                                │  │   - celery-live             │    │
+                                │  └─────────────────────────────┘    │
+                                └─────────────────────────────────────┘
+```
 
-eScriptorium needs either Linux, macOS or Windows (with WSL).
+## Features
 
+- **Laravel Proxy API**: RESTful API for document processing
+- **eScriptorium Integration**: Full OCR/HTR pipeline via eScriptorium
+- **Multi-environment Support**: Development, Staging, Production configurations
+- **Docker-based**: Fully containerized for easy deployment
+- **Queue Processing**: Background job processing for long-running tasks
+- **API Documentation**: OpenAPI/Swagger documentation included
+
+## Requirements
+
+- Docker & Docker Compose v2+
+- Git (with submodule support)
+- Make (optional, for convenience commands)
+
+## Quick Start
+
+### 1. Clone the repository
+
+```bash
+git clone --recursive <repository-url>
+cd escriptorium
+```
+
+If you already cloned without `--recursive`:
+```bash
+git submodule update --init --recursive
+```
+
+### 2. Run setup
+
+```bash
+# Using make
+make setup
+
+# Or manually
+./scripts/setup.sh
+```
+
+This will:
+- **Auto-detect platform** (ARM64 for Apple Silicon, AMD64 for Intel/AMD)
+- Configure Docker Compose files with the correct platform
+- Generate `escriptorium/variables.env` from template with correct settings
+- Create necessary directories
+- Set up pgAdmin configuration
+
+### 3. Start the development environment
+
+```bash
+# Using make
+make dev
+
+# Or manually
+docker compose -f docker-compose.development.yml up -d --build
+```
+
+### 4. Access the application
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| Laravel Proxy | http://localhost:8080 | Main application |
+| eScriptorium | http://localhost:8082 | Direct eScriptorium access |
+| API Docs | http://localhost:8080/docs | OpenAPI documentation |
+| phpMyAdmin | http://localhost:8081 | MariaDB management |
+| pgAdmin | http://localhost:5050 | PostgreSQL management |
+| Flower | http://localhost:5555 | Celery task monitor |
+| Vite | http://localhost:5173 | Frontend dev server |
+
+## Project Structure
+
+```
+.
+├── docker/                     # Docker configuration files
+│   ├── nginx/
+│   │   ├── Dockerfile
+│   │   ├── nginx.conf          # Laravel proxy nginx config
+│   │   └── escriptorium.conf   # eScriptorium nginx config
+│   ├── pgadmin/
+│   │   ├── servers.json
+│   │   └── pgpass
+│   ├── Dockerfile.proxy        # Laravel PHP-FPM image
+│   └── entrypoint.sh           # Container startup script
+│
+├── escriptorium/               # eScriptorium submodule (DO NOT MODIFY)
+│   ├── variables.env           # Runtime config (generated by setup.sh)
+│   └── ...
+│
+├── proxy/                      # Laravel application
+│   ├── app/
+│   ├── config/
+│   │   └── database.php        # Database connections config
+│   ├── routes/
+│   └── ...
+│
+├── scripts/
+│   └── setup.sh                # Initial setup script
+│
+├── docker-compose.development.yml
+├── docker-compose.staging.yml
+├── docker-compose.production.yml
+│
+├── .env.development            # Development environment variables
+├── .env.development.example
+├── .env.staging.example
+├── .env.production.example
+│
+└── Makefile                    # Convenience commands
+```
+
+## Configuration
+
+### Environment Files
+
+| File | Purpose | Git Tracked |
+|------|---------|-------------|
+| `.env.development` | Development settings | No (gitignored) |
+| `.env.staging` | Staging settings | No (gitignored) |
+| `.env.production` | Production settings | No (gitignored) |
+| `.env.*.example` | Template files | Yes |
+| `escriptorium/variables.env` | eScriptorium runtime config | No |
+| `proxy/.env` | Laravel local config | No |
+
+### Key Environment Variables
+
+#### Laravel Proxy (`.env.development`)
+
+```env
+# Application
+APP_NAME="eScriptorium Proxy"
+APP_ENV=local
+APP_DEBUG=true
+APP_URL=http://localhost:8080
+
+# MariaDB (Laravel database)
+DB_CONNECTION=mariadb
+DB_HOST=mariadb
+DB_PORT=3306
+DB_DATABASE=proxy
+DB_USERNAME=laravel
+DB_PASSWORD=secret
+
+# PostgreSQL (eScriptorium database - read access)
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=escriptorium
+
+# Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# eScriptorium Internal URLs
+ESCRIPTORIUM_URL=http://escriptorium-web:8000
+ESCRIPTORIUM_WEBSOCKET_BASE_URL=http://escriptorium-nginx
+```
+
+#### eScriptorium (`escriptorium/variables.env`)
+
+Generated automatically by `setup.sh`. Key settings:
+
+```env
+DOMAIN=localhost
+SECRET_KEY=changeme                    # Change in production!
+CSRF_TRUSTED_ORIGINS=http://localhost:8080,http://localhost:8082
+USE_X_FORWARDED_HOST=True
+
+SQL_HOST=postgres
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=escriptorium
+
+DJANGO_SU_NAME=admin
+DJANGO_SU_EMAIL=admin@admin.com
+DJANGO_SU_PASSWORD=admin               # Change in production!
+```
+
+## Database Connections
+
+Laravel is configured with two database connections:
+
+1. **mariadb** (default): Laravel's own database for users, API keys, jobs, etc.
+2. **escriptorium**: Read-only access to eScriptorium's PostgreSQL database
+
+```php
+// Using the escriptorium connection
+$documents = DB::connection('escriptorium')
+    ->table('core_document')
+    ->get();
+```
+
+## Makefile Commands
+
+```bash
+# Setup
+make setup              # Run initial setup
+
+# Development
+make dev                # Start development environment
+make dev-logs           # Follow logs
+make dev-stop           # Stop containers
+make dev-restart        # Restart containers
+make dev-shell          # Open shell in Laravel container
+make dev-artisan cmd="migrate"  # Run artisan command
+make dev-tinker         # Open Laravel Tinker
+
+# Staging
+make staging            # Start staging environment
+make staging-logs       # Follow staging logs
+make staging-stop       # Stop staging
+
+# Production
+make production         # Start production environment
+make production-logs    # Follow production logs
+make production-stop    # Stop production
+
+# Database
+make db-migrate         # Run migrations
+make db-seed            # Run seeders
+make db-fresh           # Fresh migrate with seeders
+
+# Queue
+make queue-restart      # Restart Laravel queue workers
+make celery-restart     # Restart Celery workers
+
+# Utilities
+make ps                 # Show running containers
+make logs ENV=staging   # Show logs for specific environment
+make clean              # Remove all containers and volumes
+make rebuild            # Rebuild without cache
+make help               # Show all commands
+```
+
+## Platform Support
+
+The setup script automatically detects your system architecture:
+
+| Architecture | Platform | Typical Systems |
+|--------------|----------|-----------------|
+| arm64/aarch64 | `linux/arm64` | Apple Silicon (M1/M2/M3), ARM servers |
+| x86_64/amd64 | `linux/amd64` | Intel/AMD processors, most cloud VMs |
+
+The platform is configured in `docker-compose.development.yml` during setup. To reconfigure:
+
+```bash
+# Re-run setup to auto-detect
+./scripts/setup.sh
+
+# Or manually edit docker-compose.development.yml
+# Change: platform: linux/arm64
+# To:     platform: linux/amd64
+```
+
+**Note**: Staging and Production docker-compose files don't specify a platform, so they use the host's native architecture automatically.
+
+## Environments
+
+### Development
+
+- Hot reload enabled for Laravel (via volume mounts)
+- Vite dev server for frontend assets
+- Debug tools available (phpMyAdmin, pgAdmin, Flower)
+- Relaxed resource limits
+
+```bash
+make dev
+```
+
+### Staging
+
+- Production-like configuration
+- Pre-built assets
+- Flower available with basic auth
+- Moderate resource limits
+
+```bash
+cp .env.staging.example .env.staging
+# Edit .env.staging with your settings
+make staging
+```
+
+### Production
+
+- Optimized images with OPcache
+- No debug tools exposed
+- Health checks enabled
+- Strict resource limits
+- Multiple queue worker replicas
+
+```bash
+cp .env.production.example .env.production
+# Edit .env.production with secure passwords
+make production
+```
+
+## API Documentation
+
+API documentation is available at `/docs` when the application is running.
+
+The API provides endpoints for:
+- Document management
+- Image upload and processing
+- OCR/HTR model listing and execution
+- Process status tracking
+
+Authentication is via API keys generated through the Laravel application.
+
+## Troubleshooting
+
+### Containers won't start
+
+```bash
+# Check logs
+docker compose -f docker-compose.development.yml logs
+
+# Rebuild from scratch
+make clean
+make dev
+```
+
+### Database connection issues
+
+```bash
+# Check if databases are healthy
+docker compose -f docker-compose.development.yml ps
+
+# MariaDB should show "healthy"
+# PostgreSQL should show "healthy"
+```
+
+### eScriptorium not accessible
+
+1. Check if `escriptorium/variables.env` exists and has correct settings
+2. Verify `SQL_HOST=postgres` (not `db`)
+3. Check Celery workers are running:
+   ```bash
+   docker compose -f docker-compose.development.yml logs celery-main
+   ```
+
+### Permission issues
+
+```bash
+# Fix storage permissions
+docker compose -f docker-compose.development.yml exec proxy-php \
+    chmod -R 775 storage bootstrap/cache
+```
+
+### Reset everything
+
+```bash
+make clean
+rm escriptorium/variables.env
+rm proxy/.env
+make setup
+make dev
+```
+
+## Development Workflow
+
+1. **Make changes** to Laravel code in `proxy/`
+2. **Test locally** with `make dev`
+3. **Run tests**: `make dev-artisan cmd="test"`
+4. **Check logs**: `make dev-logs`
+
+For frontend development:
+1. Vite dev server runs on port 5173
+2. Changes to `proxy/resources/` auto-reload
+3. Build for production: `docker compose exec proxy-php bun run build`
+
+## Security Notes
+
+For production deployments:
+
+1. **Change all default passwords** in `.env.production` and `escriptorium/variables.env`
+2. **Generate a new APP_KEY**: `php artisan key:generate`
+3. **Use strong SECRET_KEY** for Django
+4. **Enable HTTPS** via nginx SSL configuration
+5. **Restrict network access** to internal services
+6. **Set up proper backups** for MariaDB and PostgreSQL volumes
+
+## License
+
+[Add your license here]
 
 ## Contributing
-See [Contributing to eScriptorium](https://gitlab.com/scripta/escriptorium/-/wikis/contributing).
 
-## Current financial and technical contributors include:
-- [École Pratique des Hautes Études (EPHE)](https://www.ephe.psl.eu)
-- [Biblissima+](https://projet.biblissima.fr/)
-- [Resilience](https://www.resilience-ri.eu/)
-- [PSL Scripta](https://scripta.psl.eu/en/)
-- [Institut national de recherche en sciences et technologies du numérique (INRIA)](https://inria.fr/en)
-- [Archives nationales de France](https://www.archives-nationales.culture.gouv.fr/)
-- [L’Institut de recherche et d’histoire des textes](https://www.irht.cnrs.fr/)
-- [Open Islamicate Texts Initiative (OpenITI)](https://openiti.org/)
-- [The Andrew W. Mellon Foundation](https://mellon.org/grants/)
+[Add contribution guidelines here]

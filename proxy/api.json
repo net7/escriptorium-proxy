@@ -1,0 +1,806 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "eScriptorium Proxy API",
+        "version": "v1",
+        "description": "# eScriptorium Proxy API\n\nAPI RESTful per la trascrizione automatica OCR/HTR di manoscritti storici tramite [eScriptorium](https://escriptorium.fr/).\n\n---\n\n## Caratteristiche\n\n| Feature | Descrizione |\n|---------|-------------|\n| **IIIF Support** | Importa documenti direttamente da Manifest IIIF |\n| **Upload Diretto** | Carica immagini raw (JPEG, PNG, TIFF) |\n| **Modelli AI** | Selezione dinamica di modelli OCR e segmentazione |\n| **Dual Auth** | API Key Proxy (temporaneo) o API Key eScriptorium (persistente) |\n| **Asincrono** | Pipeline non bloccante con polling dello stato |\n\n---\n\n## Quick Start\n\n### 1. Ottieni Script e Modelli\n```bash\nGET /v1/scripts    # Lista sistemi di scrittura\nGET /v1/models     # Lista modelli OCR disponibili\n```\n\n### 2. Avvia Trascrizione\n```bash\n# Da Manifest IIIF\nPOST /v1/process/manifest\n{\n  \"script_id\": 1,\n  \"manifest_url\": \"https://example.com/iiif/manifest.json\",\n  \"recognition_model_id\": 142,\n  \"text_direction\": \"horizontal-lr\"\n}\n\n# Da Upload Immagini\nPOST /v1/process/images  (multipart/form-data)\n```\n\n### 3. Monitora e Recupera Risultato\n```bash\nGET /v1/process/{id}\n# Polling fino a status = \"COMPLETED\"\n```\n\n---\n\n## Stati del Processo\n\n| Stato | Descrizione |\n|-------|-------------|\n| `PENDING` | In coda di elaborazione |\n| `IMPORTING` | Download/upload immagini in corso |\n| `SEGMENTING` | Analisi layout delle pagine |\n| `TRANSCRIBING` | Riconoscimento testo OCR/HTR |\n| `DOWNLOADING` | Recupero risultati da eScriptorium |\n| `PROCESSING` | Elaborazione finale TEI |\n| `COMPLETED` | Testo disponibile nel campo `text` |\n| `FAILED` | Errore durante l'elaborazione |\n\n---\n\n## Autenticazione\n\nTutte le richieste richiedono l'header `X-API-Key`.\n\n| Tipo | Comportamento |\n|------|---------------|\n| **API Key Proxy** | Progetti temporanei, auto-eliminati al termine dell'elaborazione |\n| **API Key eScriptorium** | Progetti persistenti **sul tuo account eScriptorium personale** |\n\n> **Nota**: Con API Key eScriptorium puoi accedere ai progetti creati direttamente dalla piattaforma eScriptorium, modificarli manualmente e riutilizzarli in future richieste."
+    },
+    "servers": [
+        {
+            "url": "http://localhost:8080/api"
+        }
+    ],
+    "tags": [
+        {
+            "name": "eScriptorium",
+            "description": "API per trascrizione OCR automatica di manoscritti. Supporta API Key Proxy (temporaneo) o API Key eScriptorium (persistente sul tuo account)."
+        }
+    ],
+    "security": [
+        {
+            "apiKey": []
+        }
+    ],
+    "paths": {
+        "/v1/up": {
+            "get": {
+                "operationId": "healthCheck",
+                "description": "Verifica la disponibilità del servizio eScriptorium.\nRestituisce **204 No Content** se il servizio è operativo, oppure **503 Service Unavailable** se non è raggiungibile.",
+                "summary": "Verifica stato servizio",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Il servizio non è disponibile",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "204": {
+                        "description": "Il servizio è operativo (nessun contenuto)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/models": {
+            "get": {
+                "operationId": "listModels",
+                "description": "Restituisce l'elenco dei modelli di riconoscimento (OCR) e segmentazione (Layout) disponibili.\nÈ fondamentale scegliere il modello giusto per la fase corretta del processo.\n\n### Tipi di Job\n- **segment**: Modelli per l'analisi del layout. Individuano righe, colonne e regioni di testo nell'immagine.\n- **recognize**: Modelli per la trascrizione del testo (HTR/OCR). Trasformano le immagini delle righe in testo digitale.\n\n### Visibilità Modelli\n- **API Key eScriptorium**: Mostra i tuoi modelli privati + modelli condivisi.\n- **API Key Proxy**: Mostra solo i modelli globali/di servizio configurati nel sistema.",
+                "summary": "Elenco modelli OCR",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Elenco modelli recuperato con successo",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "results": [
+                                                {
+                                                    "id": 142,
+                                                    "name": "Catmus Medieval",
+                                                    "accuracy_percent": "97.2%",
+                                                    "job": "recognize"
+                                                },
+                                                {
+                                                    "id": 98,
+                                                    "name": "HTR-United Manu McFrench",
+                                                    "accuracy_percent": "95.8%",
+                                                    "job": "recognize"
+                                                },
+                                                {
+                                                    "id": 45,
+                                                    "name": "blla.mlmodel",
+                                                    "accuracy_percent": null,
+                                                    "job": "segment"
+                                                }
+                                            ],
+                                            "count": 3,
+                                            "status": 200
+                                        }
+                                    ],
+                                    "properties": {
+                                        "results": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "accuracy_percent": {
+                                                        "type": [
+                                                            "string",
+                                                            "null"
+                                                        ]
+                                                    },
+                                                    "job": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "id",
+                                                    "name",
+                                                    "accuracy_percent",
+                                                    "job"
+                                                ]
+                                            }
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "results",
+                                        "count",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Errore di comunicazione con eScriptorium",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "results": [],
+                                            "status": 500,
+                                            "message": "Connection to eScriptorium failed: timeout after 30s"
+                                        }
+                                    ],
+                                    "properties": {
+                                        "results": {
+                                            "type": "array",
+                                            "items": []
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "results",
+                                        "status",
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/scripts": {
+            "get": {
+                "operationId": "listScripts",
+                "description": "Restituisce l'elenco dei sistemi di scrittura (Script) supportati da eScriptorium.\n\nOgni script ha un **ID univoco** (`pk`) che deve essere utilizzato nel campo `script_id`\nquando si avvia un processo di trascrizione.",
+                "summary": "Elenco sistemi di scrittura",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Elenco script recuperato con successo",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "results": [
+                                                {
+                                                    "pk": 1,
+                                                    "name": "Latin"
+                                                },
+                                                {
+                                                    "pk": 2,
+                                                    "name": "Arabic"
+                                                },
+                                                {
+                                                    "pk": 3,
+                                                    "name": "Hebrew"
+                                                },
+                                                {
+                                                    "pk": 4,
+                                                    "name": "Greek"
+                                                },
+                                                {
+                                                    "pk": 5,
+                                                    "name": "Cyrillic"
+                                                }
+                                            ],
+                                            "count": 5,
+                                            "status": 200
+                                        }
+                                    ],
+                                    "properties": {
+                                        "results": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "pk": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "required": [
+                                                    "pk",
+                                                    "name"
+                                                ]
+                                            }
+                                        },
+                                        "count": {
+                                            "type": "integer"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "results",
+                                        "count",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Errore di comunicazione con eScriptorium",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "results": [],
+                                            "status": 500,
+                                            "message": "Connection to eScriptorium failed"
+                                        }
+                                    ],
+                                    "properties": {
+                                        "results": {
+                                            "type": "array",
+                                            "items": []
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "results",
+                                        "status",
+                                        "message"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/process/manifest": {
+            "post": {
+                "operationId": "processManifest",
+                "description": "Avvia una trascrizione OCR scaricando le immagini da un Manifest IIIF pubblico.\n\n### Workflow\n1. **Setup**: Creazione Progetto e Documento su eScriptorium\n2. **Import**: Download immagini dal server IIIF\n3. **Segmentation**: Analisi layout (righe e regioni)\n4. **Recognition**: Trascrizione OCR/HTR\n5. **Export**: Generazione TEI XML\n\n### Persistenza Dati\n| Tipo Chiave | Comportamento |\n|-------------|---------------|\n| **API Key Proxy** | Progetti temporanei, auto-eliminati al termine |\n| **API Key eScriptorium** | Progetti persistenti **sul tuo account personale**, supporta Find or Create |",
+                "summary": "Trascrizione da Manifest IIIF",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ManifestProcessRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "500": {
+                        "description": "Errore interno del server",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Process creation failed",
+                                            "error": "Unable to create project on eScriptorium",
+                                            "status": 500
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "error": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "error",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "201": {
+                        "description": "Processo avviato correttamente",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Process started successfully",
+                                            "transcription_id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "status": 201
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "transcription_id": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "transcription_id",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Errore di validazione parametri",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Validation failed",
+                                            "errors": {
+                                                "manifest_url": [
+                                                    "The manifest_url field is required."
+                                                ]
+                                            },
+                                            "status": 422
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "errors": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "errors",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/process/images": {
+            "post": {
+                "operationId": "processImages",
+                "description": "Avvia una trascrizione OCR caricando direttamente i file immagine.\n\n### Workflow\n1. **Setup**: Creazione Progetto e Documento su eScriptorium\n2. **Upload**: Caricamento immagini sul server\n3. **Segmentation**: Analisi layout (righe e regioni)\n4. **Recognition**: Trascrizione OCR/HTR\n5. **Export**: Generazione TEI XML\n\n### Limiti Upload\n- **Max 20MB** per singolo file\n- Formati supportati: JPEG, PNG, TIFF\n\n### Persistenza Dati\n| Tipo Chiave | Comportamento |\n|-------------|---------------|\n| **API Key Proxy** | Progetti temporanei, auto-eliminati al termine |\n| **API Key eScriptorium** | Progetti persistenti **sul tuo account personale**, supporta Find or Create |",
+                "summary": "Trascrizione da Upload Immagini",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ImagesProcessRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "500": {
+                        "description": "Errore interno del server",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Process creation failed",
+                                            "error": "Unable to create project on eScriptorium",
+                                            "status": 500
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "error": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "error",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "201": {
+                        "description": "Processo avviato correttamente",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Process started successfully",
+                                            "transcription_id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "status": 201
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "transcription_id": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "transcription_id",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Errore di validazione parametri",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Validation failed",
+                                            "errors": {
+                                                "images": [
+                                                    "The images field is required."
+                                                ]
+                                            },
+                                            "status": 422
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "errors": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "type": "array",
+                                                "items": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "errors",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/process/{id}": {
+            "get": {
+                "operationId": "getProcess",
+                "description": "Recupera lo stato di avanzamento e il risultato finale di una trascrizione.\n\n### Ciclo di Vita (`status`)\n1. **PENDING**: La richiesta è stata accettata ed è in coda di elaborazione.\n2. **IMPORTING**: È in corso il download delle immagini (da Manifest) o l'elaborazione dell'upload.\n3. **SEGMENTING**: Il modello di segmentazione sta analizzando il layout delle pagine.\n4. **TRANSCRIBING**: Il modello di riconoscimento sta leggendo il testo riga per riga.\n5. **DOWNLOADING**: Il proxy sta recuperando i risultati XML/TEI da eScriptorium.\n6. **PROCESSING**: Elaborazione finale, pulizia e formattazione del testo.\n7. **COMPLETED**: Processo terminato con successo. Il campo `text` contiene il risultato.\n\n### Stati di Errore\n- **FAILED**: Si è verificato un errore critico (es. file corrotto, timeout, errore server remoto).\n\n### Output\nQuando lo stato è `COMPLETED`, il campo `text` conterrà il testo piano estratto dal TEI.",
+                "summary": "Dettagli trascrizione",
+                "tags": [
+                    "eScriptorium"
+                ],
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "description": "UUID della trascrizione",
+                        "schema": {
+                            "type": "string"
+                        },
+                        "example": "550e8400-e29b-41d4-a716-446655440000"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dettagli trascrizione con stato e testo (se completata)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "status": "TRANSCRIBING",
+                                            "text": ""
+                                        },
+                                        {
+                                            "id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "status": "COMPLETED",
+                                            "text": "In principio creavit Deus caelum et terram.\nTerra autem erat inanis et vacua..."
+                                        },
+                                        {
+                                            "id": "550e8400-e29b-41d4-a716-446655440000",
+                                            "status": "FAILED",
+                                            "text": ""
+                                        }
+                                    ],
+                                    "properties": {
+                                        "id": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "string"
+                                        },
+                                        "text": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "required": [
+                                        "id",
+                                        "status",
+                                        "text"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Trascrizione non trovata o non accessibile",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "examples": [
+                                        {
+                                            "message": "Transcription not found",
+                                            "status": 404
+                                        }
+                                    ],
+                                    "properties": {
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "status": {
+                                            "type": "integer"
+                                        }
+                                    },
+                                    "required": [
+                                        "message",
+                                        "status"
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "apiKey": {
+                "type": "apiKey",
+                "description": "Chiave API per autenticazione. Supporta due modalità:\n\n**1. API Key Proxy** - Chiave generata dal sistema proxy\n- Progetti temporanei (auto-eliminati al termine dell'elaborazione)\n- Ideale per integrazioni automatiche e test\n- Non richiede un account eScriptorium\n\n**2. API Key eScriptorium** - Chiave personale dal tuo account eScriptorium\n- Progetti persistenti **sul tuo account eScriptorium personale**\n- Puoi accedere ai progetti direttamente da eScriptorium\n- Supporta riuso di progetti/documenti esistenti (Find or Create)\n- Ottieni la chiave da: eScriptorium → Profile → API Token",
+                "in": "header",
+                "name": "X-API-Key"
+            }
+        },
+        "schemas": {
+            "ImagesProcessRequest": {
+                "type": "object",
+                "description": "Avvia una trascrizione OCR da upload diretto di immagini.\n\nQuesto endpoint permette di caricare file immagine (JPEG, PNG, TIFF)\ndirettamente dal client per la trascrizione automatica.",
+                "properties": {
+                    "script_id": {
+                        "type": "integer"
+                    },
+                    "recognition_model_id": {
+                        "type": "integer"
+                    },
+                    "segmentation_model_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "text_direction": {
+                        "type": "string",
+                        "enum": [
+                            "horizontal-lr",
+                            "horizontal-rl",
+                            "vertical-lr",
+                            "vertical-rl"
+                        ]
+                    },
+                    "project_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "document_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "transcription_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "images": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "format": "binary",
+                            "contentMediaType": "application/octet-stream",
+                            "maxLength": 20480
+                        },
+                        "minItems": 1
+                    }
+                },
+                "required": [
+                    "script_id",
+                    "recognition_model_id",
+                    "text_direction",
+                    "images"
+                ],
+                "title": "ImagesProcessRequest"
+            },
+            "ManifestProcessRequest": {
+                "type": "object",
+                "description": "Avvia una trascrizione OCR da un Manifest IIIF.\n\nQuesto endpoint scarica le immagini da un server IIIF e avvia\nil processo di trascrizione automatica.",
+                "properties": {
+                    "script_id": {
+                        "type": "integer"
+                    },
+                    "manifest_url": {
+                        "type": "string",
+                        "format": "uri"
+                    },
+                    "pages": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "recognition_model_id": {
+                        "type": "integer"
+                    },
+                    "segmentation_model_id": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ]
+                    },
+                    "text_direction": {
+                        "type": "string",
+                        "enum": [
+                            "horizontal-lr",
+                            "horizontal-rl",
+                            "vertical-lr",
+                            "vertical-rl"
+                        ]
+                    },
+                    "project_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "document_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    },
+                    "transcription_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "maxLength": 255
+                    }
+                },
+                "required": [
+                    "script_id",
+                    "manifest_url",
+                    "recognition_model_id",
+                    "text_direction"
+                ],
+                "title": "ManifestProcessRequest"
+            }
+        }
+    }
+}

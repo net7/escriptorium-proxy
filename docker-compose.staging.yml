@@ -1,0 +1,325 @@
+# Docker Compose - Staging Environment
+# Features: Pre-built images, minimal debug access, lower resource limits
+# Platform: Auto-detects ARM64 (Apple Silicon) and AMD64
+
+services:
+  # ===========================================
+  # NGINX REVERSE PROXY
+  # ===========================================
+  nginx:
+    build:
+      context: ./docker/nginx
+    ports:
+      - "80:80"
+    volumes:
+      - proxy-public:/var/www/html/public:ro
+    depends_on:
+      - proxy-php
+      - escriptorium-web
+    networks:
+      - app-network
+    restart: always
+
+  # ===========================================
+  # LARAVEL PROXY SERVICES
+  # ===========================================
+  proxy-php:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+      target: production
+    volumes:
+      - proxy-public:/var/www/html/public
+      - proxy-storage:/var/www/html/storage
+    env_file:
+      - .env.staging
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  proxy-queue:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.proxy
+      target: production
+    volumes:
+      - proxy-storage:/var/www/html/storage
+    env_file:
+      - .env.staging
+    command: php artisan queue:work --tries=3 --timeout=90
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ===========================================
+  # LARAVEL DATABASES
+  # ===========================================
+  mariadb:
+    image: mariadb:11
+    expose:
+      - "3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_DATABASE}
+      MYSQL_USER: ${DB_USERNAME}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: always
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_USER: ${DB_USERNAME}
+      PMA_PASSWORD: ${DB_PASSWORD}
+      UPLOAD_LIMIT: 100M
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: always
+
+  # ===========================================
+  # ESCRIPTORIUM SERVICES (INTERNAL ONLY)
+  # Build locally to support ARM64 (Apple Silicon)
+  # ===========================================
+  escriptorium-nginx:
+    image: nginx:alpine
+    volumes:
+      - ./docker/nginx/escriptorium.conf:/etc/nginx/conf.d/default.conf:ro
+      - escriptorium-static:/usr/src/app/static:ro
+      - escriptorium-media:/usr/src/app/media:ro
+    depends_on:
+      - escriptorium-web
+      - escriptorium-ws
+    networks:
+      - app-network
+    restart: always
+
+  escriptorium-web:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: uwsgi --ini /usr/src/app/uwsgi.ini
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - app-network
+    restart: always
+
+  escriptorium-ws:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: daphne --bind 0.0.0.0 --port 5000 -v 1 escriptorium.asgi:application
+    expose:
+      - "5000"
+    depends_on:
+      - escriptorium-web
+    networks:
+      - app-network
+    restart: always
+
+  # ===========================================
+  # ESCRIPTORIUM DATABASES
+  # ===========================================
+  postgres:
+    image: postgres:15-alpine
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: always
+
+  redis:
+    image: redis:alpine
+    expose:
+      - "6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - app-network
+    restart: always
+
+  # ===========================================
+  # ESCRIPTORIUM CELERY WORKERS
+  # Build locally to support ARM64 (Apple Silicon)
+  # ===========================================
+  celery-main:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    environment:
+      - OMP_NUM_THREADS=1
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q default -c 4 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+
+  celery-low-priority:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q low-priority -c 2 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+
+  celery-live:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q live -c 2 --max-tasks-per-child=10"
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+
+  celery-gpu:
+    build:
+      context: ./escriptorium
+      dockerfile: Dockerfile
+    env_file:
+      - ./escriptorium/variables.env
+    environment:
+      - KRAKEN_TRAINING_DEVICE=cpu
+    volumes:
+      - escriptorium-static:/usr/src/app/static
+      - escriptorium-media:/usr/src/app/media
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu -c 1 --max-tasks-per-child=1"
+    shm_size: '3gb'
+    depends_on:
+      - redis
+      - postgres
+    networks:
+      - app-network
+    restart: always
+
+  # ===========================================
+  # MONITORING (Staging)
+  # ===========================================
+  flower:
+    image: mher/flower:latest
+    ports:
+      - "5555:5555"
+    command: ["celery", "--broker=redis://redis:6379/0", "flower", "--port=5555"]
+    environment:
+      - FLOWER_BASIC_AUTH=${FLOWER_BASIC_AUTH:-flower:changeme}
+    depends_on:
+      - redis
+    networks:
+      - app-network
+    restart: always
+
+  mail:
+    build:
+      context: ./escriptorium/exim
+      dockerfile: Dockerfile
+    expose:
+      - "25"
+    environment:
+      - PRIMARY_HOST=${DOMAIN:-localhost}
+      - ALLOWED_HOSTS=escriptorium-web ; celery-main ; celery-low-priority ; docker0
+    networks:
+      - app-network
+    restart: always
+
+# ===========================================
+# NETWORKS
+# ===========================================
+networks:
+  app-network:
+    driver: bridge
+
+# ===========================================
+# VOLUMES
+# ===========================================
+volumes:
+  mariadb-data:
+  postgres-data:
+  redis-data:
+  proxy-public:
+  proxy-storage:
+  escriptorium-static:
+  escriptorium-media:
