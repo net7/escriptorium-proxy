@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ExportFormatEnum;
 use App\Facades\eScriptorium;
 use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
@@ -206,12 +207,14 @@ class eScriptoriumDownloadJob implements ShouldQueue
             // ============================================================
             $this->dataManager->completeStep(eScriptoriumServiceDataManager::STEP_DOWNLOAD);
 
-            // Dispatcha il job di processing TEI
-            dispatch(new eScriptoriumProcessTeiJob($this->transcription, $localPath));
+            // Dispatcha il job di processing export
+            $exportFormat = $this->transcription->export_format ?? ExportFormatEnum::TeiXml;
+            dispatch(new eScriptoriumProcessExportJob($this->transcription, $localPath, $exportFormat));
 
-            Log::info('📤 [eScriptorium] Download completed, dispatching ProcessTeiJob', [
+            Log::info('📤 [eScriptorium] Download completed, dispatching ProcessExportJob', [
                 'transcription_id' => $this->transcription->id,
                 'local_path' => $localPath,
+                'export_format' => $exportFormat->value,
             ]);
 
         } catch (\Exception $e) {
@@ -245,12 +248,13 @@ class eScriptoriumDownloadJob implements ShouldQueue
     private function triggerExport(int $documentId, int $transcriptionId, array $documentValidRegionTypesIds): void
     {
         $partsPks = $this->dataManager->getPartsPks();
+        $exportFormat = $this->transcription->export_format ?? ExportFormatEnum::TeiXml;
 
         eScriptorium::exportDocument(
             (string) $documentId,
             (string) $transcriptionId,
             $partsPks,
-            'teixml',
+            $exportFormat->value,
             $documentValidRegionTypesIds
         );
     }
@@ -331,9 +335,11 @@ class eScriptoriumDownloadJob implements ShouldQueue
                     ]);
 
                     // In Direct Mode, construct the download URL
-                    // Pattern: /media/users/{user_pk}/{document_name}_export.zip
+                    // Pattern: /media/users/{user_pk}/{document_name}_export.{ext}
                     if ($userPk && $documentName) {
-                        $downloadUrl = "/media/users/{$userPk}/{$documentName}_export.zip";
+                        $exportFormat = $this->transcription->export_format ?? ExportFormatEnum::TeiXml;
+                        $ext = $exportFormat->fileExtension();
+                        $downloadUrl = "/media/users/{$userPk}/{$documentName}_export.{$ext}";
                         Log::info('🔗 [eScriptorium] Constructed download URL from export:done event', [
                             'transcription_id' => $this->transcription->id,
                             'download_url' => $downloadUrl,

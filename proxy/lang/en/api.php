@@ -58,6 +58,9 @@ return [
             'required' => 'The text_direction field is required.',
             'in' => 'The text_direction field must be one of: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, ttb.',
         ],
+        'export_format' => [
+            'in' => 'The export_format field must be one of: teixml, text, pagexml, alto, openitimarkdown.',
+        ],
     ],
 
     'body_parameters' => [
@@ -69,5 +72,6 @@ return [
         'text_direction' => 'Reading direction of the text in the document. Values: `horizontal-lr` (left-to-right: Latin, Cyrillic, Greek), `horizontal-rl` (right-to-left: Arabic, Hebrew), `vertical-lr` (top-to-bottom, columns left-to-right), `vertical-rl` (top-to-bottom, columns right-to-left: traditional CJK), `ttb` (top-to-bottom). **Required unless `document_id` is provided** (in which case it is automatically retrieved from the document\'s main_script text_direction setting).',
         'document_id' => 'ID (pk) of an existing document on eScriptorium. **Only works with eScriptorium API Key (Direct Mode)**. When provided, images/manifest will be added to this existing document instead of creating a new one. Useful for adding pages to an existing document. **Note: when using document_id, the fields `script_id` and `text_direction` are ignored/auto-filled from the existing document metadata.** If omitted or if using a Service API Key, a new temporary document is created. Returns 404 if the document does not exist, 403 if not accessible.',
         'images' => 'Array of image files to transcribe. Supported formats: JPEG, PNG, TIFF, BMP, GIF. Maximum size: 20MB per file. Images are processed in the order they are uploaded. For best results, use high-resolution scans (300 DPI or higher).',
+        'export_format' => 'Export format for the transcription output. Supported values: `teixml` (merged TEI XML document, default), `text` (plain text file), `pagexml` (PAGE XML per page in ZIP), `alto` (ALTO XML per page in ZIP), `openitimarkdown` (OpenITI mARkdown per page in ZIP). For `teixml` and `text`, the `text` field in the response contains the content. For `pagexml`, `alto` and `openitimarkdown`, only the download file is available.',
     ],
 ];

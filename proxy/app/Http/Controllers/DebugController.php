@@ -45,6 +45,7 @@ class DebugController extends Controller
                         ['name' => 'pages', 'type' => 'text', 'required' => false, 'placeholder' => '1-10 or 1,3,5', 'description' => 'Pages to process. Default: first 10 pages'],
                         ['name' => 'segmentation_model_id', 'dataType' => 'number', 'required' => false, 'description' => 'Layout model ID from GET /models (job=segment). Default: blla.mlmodel'],
                         ['name' => 'document_id', 'dataType' => 'number', 'required' => false, 'description' => 'Existing document ID (Direct Mode only). script_id and text_direction auto-filled from document'],
+                        ['name' => 'export_format', 'type' => 'select', 'required' => false, 'options' => ['teixml', 'text', 'pagexml', 'alto', 'openitimarkdown'], 'description' => 'Export format. Default: teixml. teixml/text fill the text field, pagexml/alto/openitimarkdown are download-only ZIPs'],
                     ],
                 ],
                 [
@@ -60,13 +61,22 @@ class DebugController extends Controller
                         ['name' => 'text_direction', 'type' => 'select', 'required' => true, 'options' => ['horizontal-lr', 'horizontal-rl', 'vertical-lr', 'vertical-rl', 'ttb'], 'description' => 'horizontal-lr: Latin | horizontal-rl: Arabic/Hebrew | vertical-*: CJK | ttb: top-to-bottom'],
                         ['name' => 'segmentation_model_id', 'dataType' => 'number', 'required' => false, 'description' => 'Layout model ID from GET /models (job=segment). Default: blla.mlmodel'],
                         ['name' => 'document_id', 'dataType' => 'number', 'required' => false, 'description' => 'Existing document ID (Direct Mode only). script_id and text_direction auto-filled from document'],
+                        ['name' => 'export_format', 'type' => 'select', 'required' => false, 'options' => ['teixml', 'text', 'pagexml', 'alto', 'openitimarkdown'], 'description' => 'Export format. Default: teixml. teixml/text fill the text field, pagexml/alto/openitimarkdown are download-only ZIPs'],
                     ],
                 ],
                 [
                     'method' => 'GET',
                     'path' => '/api/v1/process/{id}',
-                    'description' => 'Get the current status and result of a transcription process',
+                    'description' => 'Get the current status and result of a transcription. Response includes export_format, text (filled for teixml/text), and download_url (when file is ready)',
                     'contentType' => 'application/json',
+                    'fields' => [
+                        ['name' => 'id', 'type' => 'text', 'required' => true, 'placeholder' => 'Transcription UUID', 'pathParam' => true],
+                    ],
+                ],
+                [
+                    'method' => 'GET',
+                    'path' => '/api/v1/process/{id}/download',
+                    'description' => 'Download the original export file (ZIP or TXT depending on export_format). Available after transcription is COMPLETED',
                     'fields' => [
                         ['name' => 'id', 'type' => 'text', 'required' => true, 'placeholder' => 'Transcription UUID', 'pathParam' => true],
                     ],

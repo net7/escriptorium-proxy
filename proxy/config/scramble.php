@@ -27,7 +27,15 @@ return [
         'description' => <<<'DESC'
 # eScriptorium Proxy API
 
-API RESTful per la trascrizione automatica OCR/HTR di manoscritti storici tramite [eScriptorium](https://escriptorium.fr/).
+Questo proxy semplifica radicalmente l'utilizzo di [eScriptorium](https://escriptorium.fr/) per la trascrizione OCR/HTR di documenti storici.
+
+Con le API native di eScriptorium servono **decine di chiamate** coordinate (creazione progetto, documento, import immagini, segmentazione, trascrizione, export, download, cleanup). Il proxy riduce tutto a **2-3 chiamate REST**:
+
+1. **Avvia** il processo con un singolo `POST` (manifest IIIF o upload immagini)
+2. **Monitora** lo stato con polling `GET`
+3. **Scarica** il risultato nel formato desiderato
+
+Il proxy gestisce in autonomia l'intera pipeline asincrona: creazione risorse, polling dei task, connessione WebSocket per l'export, merge dei risultati e cleanup finale.
 
 ---
 
@@ -35,9 +43,11 @@ API RESTful per la trascrizione automatica OCR/HTR di manoscritti storici tramit
 
 | Feature | Descrizione |
 |---------|-------------|
-| **IIIF Support** | Importa documenti direttamente da Manifest IIIF |
-| **Upload Diretto** | Carica immagini raw (JPEG, PNG, TIFF) |
-| **Modelli AI** | Selezione dinamica di modelli OCR e segmentazione |
+| **2-3 chiamate** | Un intero workflow OCR in sole 2-3 chiamate REST invece di decine |
+| **IIIF Support** | Importa documenti direttamente da Manifest IIIF (v2) |
+| **Upload Diretto** | Carica immagini raw (JPEG, PNG, TIFF, fino a 20MB) |
+| **Multi-Formato** | Export in TEI XML, Plain Text, PAGE XML, ALTO XML, OpenITI mARkdown |
+| **Modelli AI** | Selezione dinamica di modelli OCR/HTR e segmentazione |
 | **Dual Auth** | API Key Proxy (temporaneo) o API Key eScriptorium (persistente) |
 | **Asincrono** | Pipeline non bloccante con polling dello stato |
 
@@ -59,7 +69,8 @@ POST /v1/process/manifest
   "script_id": 1,
   "manifest_url": "https://example.com/iiif/manifest.json",
   "recognition_model_id": 142,
-  "text_direction": "horizontal-lr"
+  "text_direction": "horizontal-lr",
+  "export_format": "teixml"
 }
 
 # Da Upload Immagini
@@ -70,7 +81,26 @@ POST /v1/process/images  (multipart/form-data)
 ```bash
 GET /v1/process/{id}
 # Polling fino a status = "COMPLETED"
+# → Risposta include: text, export_format, download_url
 ```
+
+### 4. (Opzionale) Scarica il File Export
+```bash
+GET /v1/process/{id}/download
+# → File ZIP o TXT a seconda del formato scelto
+```
+
+---
+
+## Formati di Export
+
+| Formato | Campo `text` | Download | Descrizione |
+|---------|-------------|----------|-------------|
+| `teixml` (default) | TEI XML completo | ZIP con XML per pagina | Standard TEI, merge automatico di tutte le pagine |
+| `text` | Testo piano | File TXT | Contenuto testuale estratto |
+| `pagexml` | Vuoto | ZIP con PAGE XML | Standard per HTR, un file XML per pagina |
+| `alto` | Vuoto | ZIP con ALTO XML | Standard per OCR, un file XML per pagina |
+| `openitimarkdown` | Vuoto | ZIP con .mARkdown | Formato OpenITI per testi orientali |
 
 ---
 
@@ -83,8 +113,8 @@ GET /v1/process/{id}
 | `SEGMENTING` | Analisi layout delle pagine |
 | `TRANSCRIBING` | Riconoscimento testo OCR/HTR |
 | `DOWNLOADING` | Recupero risultati da eScriptorium |
-| `PROCESSING` | Elaborazione finale TEI |
-| `COMPLETED` | Testo disponibile nel campo `text` |
+| `PROCESSING` | Elaborazione finale |
+| `COMPLETED` | Risultato disponibile |
 | `FAILED` | Errore durante l'elaborazione |
 
 ---
