@@ -52,6 +52,10 @@ class ManifestProcessRequest extends FormRequest
                 'description' => __('api.body_parameters.document_id'),
                 'example' => 456,
             ],
+            'export_format' => [
+                'description' => __('api.body_parameters.export_format'),
+                'example' => 'teixml',
+            ],
         ];
     }
 
@@ -67,6 +71,7 @@ class ManifestProcessRequest extends FormRequest
             'segmentation_model_id' => $this->segmentation_model_id === '' ? null : $this->segmentation_model_id,
             'pages' => $this->pages === '' ? null : $this->pages,
             'document_id' => $this->document_id === '' ? null : $this->document_id,
+            'export_format' => $this->export_format === '' ? null : $this->export_format,
         ]);
     }
 
@@ -80,6 +85,7 @@ class ManifestProcessRequest extends FormRequest
             'segmentation_model_id' => ['nullable', 'integer'],
             'text_direction' => ['required_without:document_id', 'nullable', 'string', 'in:horizontal-lr,horizontal-rl,vertical-lr,vertical-rl,ttb'],
             'document_id' => ['nullable', 'integer'],
+            'export_format' => ['nullable', 'string', 'in:teixml,text,pagexml,alto,openitimarkdown'],
         ];
     }
 
@@ -94,6 +100,7 @@ class ManifestProcessRequest extends FormRequest
             'recognition_model_id.integer' => __('api.validation.recognition_model_id.integer'),
             'text_direction.required' => __('api.validation.text_direction.required'),
             'text_direction.in' => __('api.validation.text_direction.in'),
+            'export_format.in' => __('api.validation.export_format.in'),
         ];
     }
 
@@ -163,6 +170,8 @@ class ManifestProcessRequest extends FormRequest
             if ($this->has('script_name')) {
                 $validated['script_name'] = $this->input('script_name');
             }
+
+            $validated['export_format'] = $this->input('export_format', 'teixml') ?? 'teixml';
         }
 
         return $validated;

@@ -58,6 +58,9 @@ return [
             'required' => 'Il campo text_direction è obbligatorio.',
             'in' => 'Il campo text_direction deve essere uno tra: horizontal-lr, horizontal-rl, vertical-lr, vertical-rl, ttb.',
         ],
+        'export_format' => [
+            'in' => 'Il campo export_format deve essere uno tra: teixml, text, pagexml, alto, openitimarkdown.',
+        ],
     ],
 
     'body_parameters' => [
@@ -69,5 +72,6 @@ return [
         'text_direction' => 'Direzione di lettura del testo nel documento. Valori: `horizontal-lr` (sinistra-destra: Latino, Cirillico, Greco), `horizontal-rl` (destra-sinistra: Arabo, Ebraico), `vertical-lr` (alto-basso, colonne sinistra-destra), `vertical-rl` (alto-basso, colonne destra-sinistra: CJK tradizionale), `ttb` (alto-basso). **Obbligatorio a meno che non sia fornito `document_id`** (in tal caso viene recuperato automaticamente dalla impostazione text_direction del main_script del documento).',
         'document_id' => 'ID (pk) di un documento esistente su eScriptorium. **Funziona solo con API Key eScriptorium (Direct Mode)**. Se fornito, le immagini/manifest verranno aggiunte a questo documento esistente invece di crearne uno nuovo. Utile per aggiungere pagine a un documento esistente. **Nota: quando si usa document_id, i campi `script_id` e `text_direction` vengono ignorati/auto-compilati dai metadati del documento esistente.** Se omesso o se si usa una Service API Key, viene creato un nuovo documento temporaneo. Restituisce 404 se il documento non esiste, 403 se non accessibile.',
         'images' => 'Array di file immagine da trascrivere. Formati supportati: JPEG, PNG, TIFF, BMP, GIF. Dimensione massima: 20MB per file. Le immagini vengono elaborate nell\'ordine in cui sono caricate. Per risultati ottimali, usare scansioni ad alta risoluzione (300 DPI o superiore).',
+        'export_format' => 'Formato di esportazione della trascrizione. Valori supportati: `teixml` (documento TEI XML unificato, default), `text` (file di testo), `pagexml` (PAGE XML per pagina in ZIP), `alto` (ALTO XML per pagina in ZIP), `openitimarkdown` (OpenITI mARkdown per pagina in ZIP). Per `teixml` e `text`, il campo `text` nella risposta contiene il contenuto. Per `pagexml`, `alto` e `openitimarkdown`, è disponibile solo il file di download.',
     ],
 ];
