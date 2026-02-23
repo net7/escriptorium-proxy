@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ExportFormatEnum;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -21,9 +22,11 @@ class Transcription extends Model
         'recognition_model_id',
         'segmentation_model_id',
         'text_direction',
+        'export_format',
         'status',
         'service_data',
         'text',
+        'export_file_path',
     ];
 
     protected function casts(): array
@@ -33,6 +36,7 @@ class Transcription extends Model
             'segmentation_model_id' => 'integer',
             'service_data' => 'array',
             'status' => eScriptoriumStatusEnum::class,
+            'export_format' => ExportFormatEnum::class,
             'direct_mode_token' => 'encrypted',
         ];
     }

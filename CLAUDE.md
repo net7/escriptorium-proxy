@@ -6,9 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Laravel Proxy** semplifica l'uso di [eScriptorium](https://gitlab.com/scripta/escriptorium) (Django + Vue + PostgreSQL + Redis + Celery) per la trascrizione OCR/HTR di documenti.
 
-**Problema risolto:** Con le API native di eScriptorium servono molte chiamate per ottenere una trascrizione. Con il proxy Laravel bastano **2 chiamate**:
-1. `POST /api/v1/process/manifest` o `POST /api/v1/process/images` → avvia il processo
-2. `GET /api/v1/process/{id}` → polling per ottenere il risultato
+**Problema risolto:** Con le API native di eScriptorium servono molte chiamate per ottenere una trascrizione. Con il proxy Laravel bastano **2-3 chiamate**:
+1. `POST /api/v1/process/manifest` o `POST /api/v1/process/images` → avvia il processo (con `export_format` opzionale)
+2. `GET /api/v1/process/{id}` → polling per ottenere stato e risultato
+3. `GET /api/v1/process/{id}/download` → (opzionale) scarica il file di export originale
 
 ## Due modalità di autenticazione
 
@@ -85,7 +86,8 @@ DB::connection('escriptorium')
 CLIENT                          LARAVEL                         ESCRIPTORIUM
    │                               │                                  │
    │  POST /process/manifest       │                                  │
-   │  {manifest_url, model_id}     │                                  │
+   │  {manifest_url, model_id,    │                                  │
+   │   export_format}              │                                  │
    ├──────────────────────────────►│                                  │
    │                               │  1. Crea progetto                │
    │                               ├─────────────────────────────────►│
@@ -113,10 +115,10 @@ CLIENT                          LARAVEL                         ESCRIPTORIUM
    │         │  CheckTranscribeJob─┼─► Poll /api/tasks/               │
    │         │         │           │                                  │
    │         │         ▼           │                                  │
-   │         │  DownloadJob ───────┼─► WebSocket + Export TEI         │
+   │         │  DownloadJob ───────┼─► WebSocket + Export (formato)    │
    │         │         │           │                                  │
    │         │         ▼           │                                  │
-   │         │  ProcessTeiJob      │  (merge XML, extract text)       │
+   │         │  ProcessExportJob   │  (processa per formato export)   │
    │         │         │           │                                  │
    │         │         ▼           │                                  │
    │         │  [Se Service Mode]──┼─► DELETE /projects/{id}/         │
@@ -124,7 +126,13 @@ CLIENT                          LARAVEL                         ESCRIPTORIUM
    │                               │                                  │
    │  GET /process/{id}            │                                  │
    ├──────────────────────────────►│                                  │
-   │  200 {status, text}           │                                  │
+   │  200 {status, export_format, │                                  │
+   │       text, download_url}     │                                  │
+   │◄──────────────────────────────┤                                  │
+   │                               │                                  │
+   │  GET /process/{id}/download  │                                  │
+   ├──────────────────────────────►│  (file servito da storage proxy) │
+   │  200 <file>                   │                                  │
    │◄──────────────────────────────┤                                  │
 ```
 
@@ -138,6 +146,10 @@ proxy/
 │   │   ├── Middleware/ValidateApiKey.php                  # Auth + rate limit
 │   │   └── Requests/eScriptorium/                         # Validazione input
 │   │
+│   ├── Enums/
+│   │   ├── eScriptoriumStatusEnum.php    # Stati trascrizione
+│   │   └── ExportFormatEnum.php          # Formati export (teixml, text, pagexml, alto, openitimarkdown)
+│   │
 │   ├── Jobs/                      # Pipeline asincrona
 │   │   ├── eScriptoriumImportDocumentJob.php      # Step 1: Import
 │   │   ├── eScriptoriumUploadImagesJob.php        # Step 1 alt: Upload
@@ -148,8 +160,9 @@ proxy/
 │   │   ├── eScriptoriumCreateTranscriptionJob.php # Crea layer
 │   │   ├── eScriptoriumTranscribeTranscriptionJob.php # Step 3: OCR
 │   │   ├── eScriptoriumCheckTranscribeTranscriptionJob.php
-│   │   ├── eScriptoriumDownloadJob.php            # Step 4: Export TEI
-│   │   └── eScriptoriumProcessTeiJob.php          # Step 5: Merge XML
+│   │   ├── eScriptoriumDownloadJob.php            # Step 4: Export (formato dinamico)
+│   │   ├── eScriptoriumProcessExportJob.php       # Step 5: Processa export (multi-formato)
+│   │   └── eScriptoriumProcessTeiJob.php          # @deprecated → usa ProcessExportJob
 │   │
 │   ├── Services/
 │   │   ├── eScriptoriumService.php           # Client HTTP per eScriptorium
@@ -187,6 +200,23 @@ Documentazione Swagger disponibile su `http://localhost:8080/docs` (Scalar UI)
 | POST | `/api/v1/process/manifest` | Avvia trascrizione da IIIF manifest |
 | POST | `/api/v1/process/images` | Avvia trascrizione da upload immagini |
 | GET | `/api/v1/process/{id}` | Stato e risultato trascrizione |
+| GET | `/api/v1/process/{id}/download` | Download file export originale |
+
+## Formati di export
+
+Il proxy supporta 5 formati di export, selezionabili tramite il campo `export_format` negli endpoint di processo:
+
+| Formato | Output eScriptorium | Campo `text` | Download |
+|---------|-------------------|--------------|----------|
+| `teixml` (default) | ZIP di XMLs | TEI XML mergiato | ZIP originale |
+| `text` | File `.txt` | Contenuto plain text | File `.txt` |
+| `pagexml` | ZIP (XML per pagina) | `""` (vuoto) | ZIP originale |
+| `alto` | ZIP (XML per pagina) | `""` (vuoto) | ZIP originale |
+| `openitimarkdown` | ZIP (mARkdown per pagina) | `""` (vuoto) | ZIP originale |
+
+**Enum**: `proxy/app/Enums/ExportFormatEnum.php` - metodi helper: `isZip()`, `hasTextContent()`, `fileExtension()`, `mimeType()`
+
+**Backward compatibility**: se `export_format` non viene inviato, default a `teixml` (comportamento identico a prima).
 
 ## Stati della trascrizione
 
@@ -195,7 +225,8 @@ Pending → Importing → Segmenting → Transcribing → Downloading → Proces
                                                                            ↘ Failed
 ```
 
-Enum: `proxy/app/Enums/eScriptoriumStatusEnum.php`
+Enum stati: `proxy/app/Enums/eScriptoriumStatusEnum.php`
+Enum formati: `proxy/app/Enums/ExportFormatEnum.php`
 
 ## Configurazione polling
 
@@ -298,6 +329,7 @@ Questa struttura JSON viene salvata nel campo `service_data` della tabella `tran
       "recognition_model_id": 142,
       "segmentation_model_id": 45,
       "text_direction": "horizontal-lr",
+      "export_format": "teixml",
       "pages": "1-10",
       "pages_array": [1, 2, 3, ...],
       "document_id": 456
@@ -459,7 +491,7 @@ Headers:
 ```
 POST /api/documents/{pk}/export/
 {
-  "file_format": "teixml",
+  "file_format": "teixml|text|pagexml|alto|openitimarkdown",
   "include_characters": false,
   "include_images": false,
   "transcription": 789,
@@ -467,6 +499,7 @@ POST /api/documents/{pk}/export/
   "region_types": ["Paragraph", "Undefined", "Orphan"]
 }
 ```
+Il formato viene letto da `$transcription->export_format` (campo nel DB).
 
 **Step 4: Attesa messaggio WebSocket**
 ```json
@@ -479,21 +512,34 @@ POST /api/documents/{pk}/export/
 
 **Step 5: Download file**
 ```
-GET {base_url}/media/exports/doc_456_export.zip
+GET {base_url}/media/exports/doc_456_export.{zip|txt}
 Authorization: Token {token}
 ```
+L'estensione del file dipende dal formato: `.zip` per tutti tranne `text` che produce `.txt`.
+In Direct Mode, l'URL viene costruito con `ExportFormatEnum->fileExtension()`.
 
 **Step 6: Cleanup (solo Service Mode)**
 ```
 DELETE /api/projects/{pk}/
 ```
 
-### 10. ProcessTeiJob
+### 10. ProcessExportJob (multi-formato)
 
-- Estrae ZIP
-- Merge di tutti i file TEI XML in un unico documento
-- Estrae plain text dal TEI
-- Aggiorna `Transcription.text` con il risultato
+Sostituisce il vecchio `ProcessTeiJob` (deprecato, mantenuto per job in-flight durante deploy).
+
+Il processing dipende dal formato di export (`ExportFormatEnum`):
+
+| Formato | Processing | Campo `text` | File |
+|---------|-----------|--------------|------|
+| `teixml` | Estrae ZIP, merge XMLs in TEI unico | TEI XML mergiato | ZIP mantenuto |
+| `text` | Legge file `.txt` | Contenuto plain text | File mantenuto |
+| `pagexml` | Valida esistenza file | `null` (vuoto) | ZIP mantenuto |
+| `alto` | Valida esistenza file | `null` (vuoto) | ZIP mantenuto |
+| `openitimarkdown` | Valida esistenza file | `null` (vuoto) | ZIP mantenuto |
+
+- Salva `export_file_path` sulla Transcription per l'endpoint download
+- **NON cancella** mai il file scaricato (a differenza di ProcessTeiJob)
+- Per `teixml`, cancella solo la directory estratta temporanea, mantiene il ZIP
 - Imposta status a `COMPLETED`
 
 ## Gestione Polling e Job Obsoleti
@@ -665,3 +711,7 @@ $alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 - **CRITICO**: `ESCRIPTORIUM_DJANGO_SECRET_KEY` deve corrispondere a `SECRET_KEY` di Django per la creazione di sessioni WebSocket in Direct Mode
 - In Direct Mode, il WebSocket viene autenticato creando una sessione Django direttamente in PostgreSQL (via `DjangoSessionService`)
 - Il campo `direct_mode_token` nella tabella `transcriptions` è **cifrato** (Laravel `encrypted` cast) - il token API non è mai salvato in chiaro
+- I file di export sono mantenuti nello storage locale del proxy (`storage/app/private/`) e serviti tramite l'endpoint `/process/{id}/download`
+- In Service Mode il progetto eScriptorium viene cancellato dopo il download, quindi il file è disponibile solo tramite il proxy locale
+- `ProcessTeiJob` è **deprecato** - i nuovi dispatch usano `ProcessExportJob` che gestisce tutti i formati
+- L'endpoint download verifica ownership: il file è accessibile solo con la stessa API key usata per avviare il processo
