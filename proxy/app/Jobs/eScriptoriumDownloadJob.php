@@ -414,6 +414,16 @@ class eScriptoriumDownloadJob implements ShouldQueue
         // Salva il file
         Storage::disk('local')->put($localPath, $response->body());
 
+        // Assicura che il file e le directory siano leggibili da PHP-FPM (www-data)
+        $fullPath = Storage::disk('local')->path($localPath);
+        chmod($fullPath, 0644);
+        // Rendi accessibili tutte le directory parent fino a exports/
+        $dir = dirname($fullPath);
+        while ($dir !== Storage::disk('local')->path('escriptorium') && str_contains($dir, 'escriptorium/exports')) {
+            chmod($dir, 0755);
+            $dir = dirname($dir);
+        }
+
         return $localPath;
     }
 
