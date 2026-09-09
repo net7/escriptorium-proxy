@@ -10,7 +10,7 @@ services:
     build:
       context: ./docker/nginx
     ports:
-      - "8080:80"
+      - "8083:80"
     volumes:
       - ./proxy/public:/var/www/html/public:ro
       - ./docker/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
@@ -264,7 +264,7 @@ services:
     volumes:
       - escriptorium-static:/usr/src/app/static
       - escriptorium-media:/usr/src/app/media
-    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu -c 1 --max-tasks-per-child=1"
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu,intensive-inference -c 1 --max-tasks-per-child=1"
     shm_size: '3gb'
     depends_on:
       - redis

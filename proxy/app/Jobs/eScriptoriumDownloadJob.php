@@ -262,34 +262,19 @@ class eScriptoriumDownloadJob implements ShouldQueue
     /**
      * Attende il messaggio WebSocket con il link di download.
      *
-     * In Service Mode: receives 'message' type notification with links directly
-     * In Direct Mode: receives 'export:done' event, then constructs the download URL
+     * Both authentication modes receive the user's notification with the real link.
+     * The document completion event does not contain a filename.
      */
     private function waitForDownloadLink(Client $wsClient): ?string
     {
         $timeout = config('escriptorium.websocket.timeout', 60);
         $startTime = time();
 
-        // Get user info for Direct Mode URL construction
-        $userPk = null;
-        $documentName = $this->dataManager->getDocumentName();
-
-        if ($this->isDirectMode()) {
-            try {
-                $currentUser = eScriptorium::getCurrentUser();
-                $userPk = $currentUser['pk'] ?? null;
-                Log::info('👤 [eScriptorium] Current user for export', [
-                    'transcription_id' => $this->transcription->id,
-                    'user_pk' => $userPk,
-                    'document_name' => $documentName,
-                ]);
-            } catch (\Exception $e) {
-                Log::warning('⚠️ [eScriptorium] Could not get current user', [
-                    'transcription_id' => $this->transcription->id,
-                    'error' => $e->getMessage(),
-                ]);
-            }
-        }
+        $documentId = $this->dataManager->getDocumentId();
+        $exportFormat = $this->transcription->export_format ?? ExportFormatEnum::TeiXml;
+        $filenamePattern = '/^export_doc'.preg_quote((string) $documentId, '/')
+            .'_.*_'.preg_quote($exportFormat->value, '/').'_[0-9]{14}\.'
+            .preg_quote($exportFormat->fileExtension(), '/').'$/D';
 
         Log::info('🔍 [eScriptorium] Waiting for download link', [
             'transcription_id' => $this->transcription->id,
@@ -311,21 +296,20 @@ class eScriptoriumDownloadJob implements ShouldQueue
                     'text' => $data['text'] ?? null,
                 ]);
 
-                if (! $data) {
+                if (! \is_array($data)) {
                     continue;
                 }
 
-                // Option 1: Notification message with links (Service Mode)
-                if (($data['type'] ?? '') === 'message' &&
-                    str_contains($data['text'] ?? '', 'Export done')) {
-
-                    $links = $data['links'] ?? [];
-                    if (! empty($links) && isset($links[0]['src'])) {
-                        return $links[0]['src'];
+                if (($data['type'] ?? '') === 'message') {
+                    foreach ($data['links'] ?? [] as $link) {
+                        $url = $link['src'] ?? null;
+                        if (\is_string($url) && str_starts_with($url, '/media/') &&
+                            preg_match($filenamePattern, basename($url))) {
+                            return $url;
+                        }
                     }
                 }
 
-                // Option 2: Export done event (Direct Mode) - construct URL from pattern
                 if (($data['type'] ?? '') === 'event' &&
                     ($data['name'] ?? '') === 'export:done') {
 
@@ -334,28 +318,6 @@ class eScriptoriumDownloadJob implements ShouldQueue
                         'data' => $data['data'] ?? [],
                     ]);
 
-                    // In Direct Mode, construct the download URL
-                    // Pattern: /media/users/{user_pk}/{document_name}_export.{ext}
-                    if ($userPk && $documentName) {
-                        $exportFormat = $this->transcription->export_format ?? ExportFormatEnum::TeiXml;
-                        $ext = $exportFormat->fileExtension();
-                        $downloadUrl = "/media/users/{$userPk}/{$documentName}_export.{$ext}";
-                        Log::info('🔗 [eScriptorium] Constructed download URL from export:done event', [
-                            'transcription_id' => $this->transcription->id,
-                            'download_url' => $downloadUrl,
-                        ]);
-
-                        return $downloadUrl;
-                    }
-
-                    // Fallback: try common pattern if we have at least user_pk
-                    if ($userPk) {
-                        $downloadUrl = "/media/users/{$userPk}/";
-                        Log::warning('⚠️ [eScriptorium] Export done but document name unknown, using partial URL', [
-                            'transcription_id' => $this->transcription->id,
-                            'partial_url' => $downloadUrl,
-                        ]);
-                    }
                 }
 
                 // Error handling
@@ -372,6 +334,7 @@ class eScriptoriumDownloadJob implements ShouldQueue
                         'transcription_id' => $this->transcription->id,
                         'elapsed' => time() - $startTime,
                     ]);
+
                     continue;
                 }
                 throw $e;
