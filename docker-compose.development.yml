@@ -264,7 +264,7 @@ services:
     volumes:
       - escriptorium-static:/usr/src/app/static
       - escriptorium-media:/usr/src/app/media
-    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu -c 1 --max-tasks-per-child=1"
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu,intensive-inference -c 1 --max-tasks-per-child=1"
     shm_size: '3gb'
     depends_on:
       - redis

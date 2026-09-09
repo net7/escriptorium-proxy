@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\API\v1;
 
+use App\Contexts\ApiContext;
 use App\Enums\eScriptoriumStatusEnum;
 use App\Enums\ExportFormatEnum;
 use App\Enums\ProcessSourceEnum;
@@ -20,11 +21,12 @@ use Dedoc\Scramble\Attributes\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Number;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * API per la gestione delle trascrizioni OCR tramite eScriptorium.
@@ -209,10 +211,10 @@ class eScriptoriumController extends Controller
      * Upload New Model
      *
      * Carica un nuovo modello OCR personalizzato su eScriptorium.
-     * Supporta file formato `.mlmodel` (compatibile con motore Kraken).
+     * Supporta file formato `.mlmodel` e `.safetensors` (compatibili con motore Kraken).
      *
      * ### Requisiti
-     * - **File**: Deve essere un file binario valido `.mlmodel`.
+     * - **File**: Deve essere un file binario valido `.mlmodel` o `.safetensors`.
      * - **Nome**: Deve essere univoco nel tuo account. Se esiste già, riceverai un errore `409 Conflict`.
      *
      * ### Nota Tecnica
@@ -235,25 +237,32 @@ class eScriptoriumController extends Controller
         }
 
         try {
-            eScriptorium::newModelViaBrowser(
-                $request->validated('name'),
-                $request->validated('file')
-            );
-        } catch (\RuntimeException $e) {
-            try {
+            if (ApiContext::isDirectMode()) {
                 eScriptorium::newModel(
                     $request->validated('name'),
                     $request->validated('file')
                 );
-            } catch (\Exception $e) {
-                Log::error('❌ [eScriptorium] Model upload failed', ['error' => $e->getMessage()]);
-
-                return response()->json([
-                    'message' => __('validation.escriptorium.new_model.failed'),
-                    'status' => 500,
-                    'error' => $e->getMessage(),
-                ], 500);
+            } else {
+                try {
+                    eScriptorium::newModelViaBrowser(
+                        $request->validated('name'),
+                        $request->validated('file')
+                    );
+                } catch (\RuntimeException $e) {
+                    eScriptorium::newModel(
+                        $request->validated('name'),
+                        $request->validated('file')
+                    );
+                }
             }
+        } catch (\Exception $e) {
+            Log::error('❌ [eScriptorium] Model upload failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'message' => __('validation.escriptorium.new_model.failed'),
+                'status' => 500,
+                'error' => $e->getMessage(),
+            ], 500);
         }
 
         return response()->noContent(201);
@@ -723,7 +732,7 @@ class eScriptoriumController extends Controller
             ],
         ]
     )]
-    public function download(Request $request, string $id): \Symfony\Component\HttpFoundation\BinaryFileResponse|JsonResponse
+    public function download(Request $request, string $id): BinaryFileResponse|JsonResponse
     {
         $apiKey = $request->attributes->get('api_key');
 
