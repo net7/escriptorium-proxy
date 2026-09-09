@@ -3,21 +3,32 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build",
-        "dev": "vite"
+        "build": "vp build",
+        "dev": "vp dev"
     },
     "devDependencies": {
-        "@tailwindcss/vite": "^4.1.18",
-        "axios": "^1.13.2",
-        "concurrently": "^9.2.1",
+        "@tailwindcss/vite": "^4.3.3",
+        "axios": "^1.20.0",
+        "concurrently": "^9.2.4",
         "laravel-vite-plugin": "^2.1.0",
-        "tailwindcss": "^4.1.18",
-        "vite": "^7.3.1"
+        "tailwindcss": "^4.3.3",
+        "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
+        "vite-plus": "0.3.1"
     },
     "dependencies": {
-        "@inertiajs/react": "^2.3.11",
-        "@vitejs/plugin-react": "^5.1.2",
-        "react": "^19.2.3",
-        "react-dom": "^19.2.3"
+        "@inertiajs/react": "^2.3.27",
+        "@vitejs/plugin-react": "^5.2.0",
+        "react": "^19.2.8",
+        "react-dom": "^19.2.8"
+    },
+    "overrides": {
+        "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1"
+    },
+    "devEngines": {
+        "packageManager": {
+            "name": "bun",
+            "version": "1.4.2",
+            "onFail": "download"
+        }
     }
 }
