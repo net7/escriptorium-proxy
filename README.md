@@ -8,6 +8,8 @@ A Laravel API for orchestrating **OCR and handwritten text recognition** with [e
 
 [![Release v1.0.0](https://img.shields.io/badge/Release-v1.0.0-2563eb?style=flat-square)](https://github.com/net7/escriptorium-proxy/releases/tag/v1.0.0) [![eScriptorium v26.07](https://img.shields.io/badge/eScriptorium-v26.07-0d9488?style=flat-square)](https://gitlab.com/scripta/escriptorium/-/tree/v26.07) [![Laravel 12](https://img.shields.io/badge/Laravel-12-ef4444?style=flat-square&logo=laravel&logoColor=white)](proxy/composer.json) [![PHP 8.4 container](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)](docker/Dockerfile.proxy) [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](docker-compose.development.yml) [![GPL-3.0 license](https://img.shields.io/badge/License-GPL--3.0-16a34a?style=flat-square)](LICENSE)
 
+[![DOI: 10.5281/zenodo.22940498](https://zenodo.org/badge/DOI/10.5281/zenodo.22940498.svg)](https://doi.org/10.5281/zenodo.22940498)
+
 [🚀 Quick start](#quick-start) · [🔌 API guide](#api-guide) · [🏗️ Architecture](#architecture) · [🌍 Deployment](#deployment) · [🤝 Contributing](#contributing) · [⚖️ License](#license)
 
 </div>
@@ -337,6 +339,14 @@ docker compose --env-file .env.development -f docker-compose.development.yml exe
 ```
 
 Include your version, environment and sanitized logs when reporting a problem. Keep credentials, API keys, local environment files and document data out of commits and public reports.
+
+## 📚 Citation
+
+If you use eScriptorium Proxy in your research, please cite the accompanying paper:
+
+**[From Tool to Infrastructure: The Digital Servitization of ATR with eScriptorium](https://zenodo.org/records/22940498)** — Luca De Santis, Nicola Baglini, Monica Monachini, Federico Boschetti, Angelo Mario Del Grosso and Chiara Aiola.
+
+**DOI:** [10.5281/zenodo.22940498](https://doi.org/10.5281/zenodo.22940498) · [📄 Read on Zenodo](https://zenodo.org/records/22940498)
 
 ## 💙 Acknowledgements
 
