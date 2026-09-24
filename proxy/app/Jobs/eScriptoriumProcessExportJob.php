@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ExportFormatEnum;
 use App\Facades\eScriptorium;
 use App\Jobs\Concerns\UsesEscriptoriumAuth;
 use App\Models\Transcription;
@@ -21,22 +22,17 @@ use RuntimeException;
 use ZipArchive;
 
 /**
- * Job per processare l'export TEI XML scaricato da eScriptorium.
+ * Job per processare l'export scaricato da eScriptorium.
  *
- * Questo job:
- * 1. Estrae il file ZIP scaricato
- * 2. Legge tutti i file XML nella cartella estratta
- * 3. Merge i contenuti TEI con mergeTeiContents()
- * 4. Aggiorna la transcription con il testo TEI merged
- * 5. Pulisce i file temporanei (ZIP e cartella estratta)
+ * Gestisce tutti i formati di export:
+ * - teixml: estrae ZIP, merge XMLs, salva TEI in text, mantiene ZIP
+ * - text: legge il file .txt, salva contenuto in text, mantiene file
+ * - pagexml/alto: mantiene ZIP, text resta null
  *
  * Flusso:
- * DownloadJob → [QUESTO JOB] → ✅ COMPLETED
- *
- * @deprecated Sostituito da eScriptoriumProcessExportJob che gestisce tutti i formati di export.
- *             Questo job resta per compatibilità con job già in coda durante il deploy.
+ * DownloadJob → [QUESTO JOB] → COMPLETED
  */
-class eScriptoriumProcessTeiJob implements ShouldQueue
+class eScriptoriumProcessExportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels, UsesEscriptoriumAuth;
 
@@ -71,15 +67,17 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
      * Crea una nuova istanza del job.
      *
      * @param  Transcription  $transcription  La trascrizione da aggiornare
-     * @param  string  $zipPath  Il percorso del file ZIP (relativo a storage/app/private)
+     * @param  string  $filePath  Il percorso del file scaricato (relativo a storage/app/private)
+     * @param  ExportFormatEnum  $exportFormat  Il formato di export richiesto
      */
     public function __construct(
         private Transcription $transcription,
-        private string $zipPath
+        private string $filePath,
+        private ExportFormatEnum $exportFormat
     ) {}
 
     /**
-     * Esegue il job di processing TEI.
+     * Esegue il job di processing export.
      */
     public function handle(): void
     {
@@ -90,30 +88,78 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
         $this->updateStatus(eScriptoriumStatusEnum::Processing);
         $this->dataManager->startStep(eScriptoriumServiceDataManager::STEP_PROCESS);
 
-        Log::info('🔄 [eScriptorium] Processing TEI export', $this->logContext());
+        Log::info('[eScriptorium] Processing export', $this->logContext(['format' => $this->exportFormat->value]));
 
         try {
-            $extractPath = $this->extractZip();
-            Log::info('📦 [eScriptorium] ZIP extracted', $this->logContext(['extract_path' => $extractPath]));
+            match ($this->exportFormat) {
+                ExportFormatEnum::TeiXml => $this->processTeiXml(),
+                ExportFormatEnum::Text => $this->processText(),
+                ExportFormatEnum::PageXml, ExportFormatEnum::Alto, ExportFormatEnum::OpenItiMarkdown => $this->processZipOnly(),
+            };
 
-            $xmlContents = $this->readXmlFiles($extractPath);
-            $this->ensureXmlFilesFound($xmlContents);
-            Log::info('📄 [eScriptorium] XML files read', $this->logContext(['count' => count($xmlContents)]));
-
-            $mergedTei = $this->mergeTeiContents($xmlContents);
-            Log::info('� [eScriptorium] TEI contents merged', $this->logContext(['length' => Str::length($mergedTei)]));
-
-            $this->transcription->update(['text' => $mergedTei]);
-
-            $this->cleanup($extractPath);
-            Log::info('🧹 [eScriptorium] Cleanup completed', $this->logContext());
+            $this->transcription->update(['export_file_path' => $this->filePath]);
 
             $this->markAsCompleted();
-            Log::info('✅ [eScriptorium] Processing completed successfully', $this->logContext());
+            Log::info('[eScriptorium] Processing completed successfully', $this->logContext());
 
         } catch (\Throwable $e) {
             $this->handleFailure($e);
         }
+    }
+
+    /**
+     * TEI XML: estrae ZIP, merge XMLs, salva TEI merged in text, mantiene ZIP.
+     */
+    private function processTeiXml(): void
+    {
+        $extractPath = $this->extractZip();
+        Log::info('[eScriptorium] ZIP extracted', $this->logContext(['extract_path' => $extractPath]));
+
+        $xmlContents = $this->readXmlFiles($extractPath);
+        $this->ensureXmlFilesFound($xmlContents);
+        Log::info('[eScriptorium] XML files read', $this->logContext(['count' => count($xmlContents)]));
+
+        $mergedTei = $this->mergeTeiContents($xmlContents);
+        Log::info('[eScriptorium] TEI contents merged', $this->logContext(['length' => Str::length($mergedTei)]));
+
+        $this->transcription->update(['text' => $mergedTei]);
+
+        // Elimina solo la directory estratta, mantiene il ZIP per il download
+        if ($this->disk()->exists($extractPath)) {
+            $this->disk()->deleteDirectory($extractPath);
+        }
+        Log::info('[eScriptorium] Extracted directory cleaned up (ZIP preserved)', $this->logContext());
+    }
+
+    /**
+     * Text: legge il file .txt, salva contenuto in text.
+     */
+    private function processText(): void
+    {
+        $fullPath = $this->disk()->path($this->filePath);
+
+        if (! File::exists($fullPath)) {
+            throw new RuntimeException("Text file not found: {$this->filePath}");
+        }
+
+        $content = File::get($fullPath);
+        $this->transcription->update(['text' => $content]);
+
+        Log::info('[eScriptorium] Text file read', $this->logContext(['length' => Str::length($content)]));
+    }
+
+    /**
+     * PageXml/Alto: mantiene il ZIP, text resta null.
+     */
+    private function processZipOnly(): void
+    {
+        $fullPath = $this->disk()->path($this->filePath);
+
+        if (! File::exists($fullPath)) {
+            throw new RuntimeException("ZIP file not found: {$this->filePath}");
+        }
+
+        Log::info('[eScriptorium] ZIP file preserved for download', $this->logContext());
     }
 
     /**
@@ -122,14 +168,6 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
     private function disk(): Filesystem
     {
         return $this->disk ??= Storage::disk('local');
-    }
-
-    /**
-     * Ritorna il percorso completo del file ZIP.
-     */
-    private function fullZipPath(): string
-    {
-        return $this->disk()->path($this->zipPath);
     }
 
     /**
@@ -150,7 +188,7 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
     {
         return array_merge([
             'transcription_id' => $this->transcription->id,
-            'zip_path' => $this->zipPath,
+            'file_path' => $this->filePath,
         ], $extra);
     }
 
@@ -202,7 +240,7 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
      */
     private function handleFailure(\Throwable $e): void
     {
-        Log::error('❌ [eScriptorium] Processing failed', $this->logContext(['error' => $e->getMessage()]));
+        Log::error('[eScriptorium] Processing failed', $this->logContext(['error' => $e->getMessage()]));
 
         $this->dataManager->failStep(eScriptoriumServiceDataManager::STEP_PROCESS, $e->getMessage());
         $this->updateStatus(eScriptoriumStatusEnum::Failed);
@@ -219,10 +257,10 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
      */
     private function extractZip(): string
     {
-        $fullZipPath = $this->fullZipPath();
+        $fullZipPath = $this->disk()->path($this->filePath);
 
         if (! File::exists($fullZipPath)) {
-            throw new RuntimeException("ZIP file not found: {$this->zipPath}");
+            throw new RuntimeException("ZIP file not found: {$this->filePath}");
         }
 
         $extractDir = $this->buildExtractDirectory();
@@ -240,8 +278,8 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
      */
     private function buildExtractDirectory(): string
     {
-        $dirname = pathinfo($this->zipPath, PATHINFO_DIRNAME);
-        $filename = pathinfo($this->zipPath, PATHINFO_FILENAME);
+        $dirname = pathinfo($this->filePath, PATHINFO_DIRNAME);
+        $filename = pathinfo($this->filePath, PATHINFO_FILENAME);
 
         return "{$dirname}/{$filename}";
     }
@@ -319,20 +357,19 @@ class eScriptoriumProcessTeiJob implements ShouldQueue
     }
 
     /**
-     * Pulisce i file temporanei.
-     *
-     * @param  string  $extractPath  Il percorso della cartella estratta
+     * Gestisce il fallimento permanente del job.
      */
-    private function cleanup(string $extractPath): void
+    public function failed(?\Throwable $exception): void
     {
-        // Elimina la cartella estratta
-        if ($this->disk()->exists($extractPath)) {
-            $this->disk()->deleteDirectory($extractPath);
-        }
+        $this->cleanupEscriptoriumAuth();
 
-        // Elimina il file ZIP
-        if ($this->disk()->exists($this->zipPath)) {
-            $this->disk()->delete($this->zipPath);
-        }
+        Log::error('[eScriptorium] Processing permanently failed', [
+            'transcription_id' => $this->transcription->id,
+            'error' => $exception?->getMessage(),
+        ]);
+
+        $this->transcription->update(['status' => eScriptoriumStatusEnum::Failed->value]);
+        eScriptoriumServiceDataManager::for($this->transcription)
+            ->failStep(eScriptoriumServiceDataManager::STEP_PROCESS, $exception?->getMessage() ?? 'Unknown error');
     }
 }

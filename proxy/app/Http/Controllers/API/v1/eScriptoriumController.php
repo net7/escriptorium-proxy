@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\API\v1;
 
+use App\Contexts\ApiContext;
 use App\Enums\eScriptoriumStatusEnum;
+use App\Enums\ExportFormatEnum;
 use App\Enums\ProcessSourceEnum;
 use App\Facades\eScriptorium;
 use App\Http\Controllers\Controller;
@@ -21,8 +23,10 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response as HttpResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Number;
 use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 /**
  * API per la gestione delle trascrizioni OCR tramite eScriptorium.
@@ -32,7 +36,8 @@ use Illuminate\Support\Str;
  * - Ottenere l'elenco dei modelli OCR disponibili
  * - Avviare processi di trascrizione automatica
  * - Monitorare lo stato delle trascrizioni
- * - Recuperare i risultati in formato TEI
+ * - Recuperare i risultati in diversi formati (TEI XML, Plain Text, PAGE XML, ALTO, OpenITI mARkdown)
+ * - Scaricare i file di export originali
  *
  * ## Modalità di Autenticazione
  *
@@ -206,10 +211,10 @@ class eScriptoriumController extends Controller
      * Upload New Model
      *
      * Carica un nuovo modello OCR personalizzato su eScriptorium.
-     * Supporta file formato `.mlmodel` (compatibile con motore Kraken).
+     * Supporta file formato `.mlmodel` e `.safetensors` (compatibili con motore Kraken).
      *
      * ### Requisiti
-     * - **File**: Deve essere un file binario valido `.mlmodel`.
+     * - **File**: Deve essere un file binario valido `.mlmodel` o `.safetensors`.
      * - **Nome**: Deve essere univoco nel tuo account. Se esiste già, riceverai un errore `409 Conflict`.
      *
      * ### Nota Tecnica
@@ -232,25 +237,32 @@ class eScriptoriumController extends Controller
         }
 
         try {
-            eScriptorium::newModelViaBrowser(
-                $request->validated('name'),
-                $request->validated('file')
-            );
-        } catch (\RuntimeException $e) {
-            try {
+            if (ApiContext::isDirectMode()) {
                 eScriptorium::newModel(
                     $request->validated('name'),
                     $request->validated('file')
                 );
-            } catch (\Exception $e) {
-                Log::error('❌ [eScriptorium] Model upload failed', ['error' => $e->getMessage()]);
-
-                return response()->json([
-                    'message' => __('validation.escriptorium.new_model.failed'),
-                    'status' => 500,
-                    'error' => $e->getMessage(),
-                ], 500);
+            } else {
+                try {
+                    eScriptorium::newModelViaBrowser(
+                        $request->validated('name'),
+                        $request->validated('file')
+                    );
+                } catch (\RuntimeException $e) {
+                    eScriptorium::newModel(
+                        $request->validated('name'),
+                        $request->validated('file')
+                    );
+                }
             }
+        } catch (\Exception $e) {
+            Log::error('❌ [eScriptorium] Model upload failed', ['error' => $e->getMessage()]);
+
+            return response()->json([
+                'message' => __('validation.escriptorium.new_model.failed'),
+                'status' => 500,
+                'error' => $e->getMessage(),
+            ], 500);
         }
 
         return response()->noContent(201);
@@ -266,7 +278,16 @@ class eScriptoriumController extends Controller
      * 2. **Import**: Download immagini dal server IIIF
      * 3. **Segmentation**: Analisi layout (righe e regioni)
      * 4. **Recognition**: Trascrizione OCR/HTR
-     * 5. **Export**: Generazione TEI XML
+     * 5. **Export**: Generazione output nel formato richiesto
+     *
+     * ### Formati di Export (`export_format`)
+     * | Formato | Descrizione | Campo `text` | Download |
+     * |---------|-------------|-------------|----------|
+     * | `teixml` (default) | TEI XML unificato da più pagine | Documento TEI XML completo | ZIP con XML per pagina |
+     * | `text` | Testo piano estratto | Contenuto testuale | File TXT |
+     * | `pagexml` | PAGE XML (standard per HTR) | Vuoto | ZIP con XML per pagina + METS.xml |
+     * | `alto` | ALTO XML (standard per OCR) | Vuoto | ZIP con XML per pagina + METS.xml |
+     * | `openitimarkdown` | OpenITI mARkdown | Vuoto | ZIP con .mARkdown per pagina |
      *
      * ### Persistenza Dati
      * | Tipo Chiave | Comportamento |
@@ -328,7 +349,16 @@ class eScriptoriumController extends Controller
      * 2. **Upload**: Caricamento immagini sul server
      * 3. **Segmentation**: Analisi layout (righe e regioni)
      * 4. **Recognition**: Trascrizione OCR/HTR
-     * 5. **Export**: Generazione TEI XML
+     * 5. **Export**: Generazione output nel formato richiesto
+     *
+     * ### Formati di Export (`export_format`)
+     * | Formato | Descrizione | Campo `text` | Download |
+     * |---------|-------------|-------------|----------|
+     * | `teixml` (default) | TEI XML unificato da più pagine | Documento TEI XML completo | ZIP con XML per pagina |
+     * | `text` | Testo piano estratto | Contenuto testuale | File TXT |
+     * | `pagexml` | PAGE XML (standard per HTR) | Vuoto | ZIP con XML per pagina + METS.xml |
+     * | `alto` | ALTO XML (standard per OCR) | Vuoto | ZIP con XML per pagina + METS.xml |
+     * | `openitimarkdown` | OpenITI mARkdown | Vuoto | ZIP con .mARkdown per pagina |
      *
      * ### Limiti Upload
      * - **Max 20MB** per singolo file
@@ -528,6 +558,7 @@ class eScriptoriumController extends Controller
                     'recognition_model_id' => $data['recognition_model_id'],
                     'segmentation_model_id' => $data['segmentation_model_id'] ?? null,
                     'text_direction' => $data['text_direction'],
+                    'export_format' => $data['export_format'] ?? ExportFormatEnum::TeiXml->value,
                     'status' => eScriptoriumStatusEnum::Pending->value,
                     'service_data' => $serviceData,
                 ]);
@@ -575,29 +606,60 @@ class eScriptoriumController extends Controller
      * ### Stati di Errore
      * - **FAILED**: Si è verificato un errore critico (es. file corrotto, timeout, errore server remoto).
      *
-     * ### Output
-     * Quando lo stato è `COMPLETED`, il campo `text` conterrà il testo piano estratto dal TEI.
+     * ### Output per formato
+     * Quando lo stato è `COMPLETED`, la risposta contiene sia il campo `text` che `download_url`.
+     * Il contenuto di `text` dipende dal formato di export scelto:
+     *
+     * | Formato | Campo `text` | `download_url` |
+     * |---------|-------------|----------------|
+     * | `teixml` | Documento TEI XML completo (merge di tutte le pagine) | ZIP con i singoli file XML |
+     * | `text` | Testo piano della trascrizione | File TXT originale |
+     * | `pagexml` | Vuoto | ZIP con PAGE XML per pagina + METS.xml |
+     * | `alto` | Vuoto | ZIP con ALTO XML per pagina + METS.xml |
+     * | `openitimarkdown` | Vuoto | ZIP con .mARkdown per pagina |
+     *
+     * Il campo `download_url` è un link diretto per scaricare il file di export originale
+     * dallo storage del proxy. Il file resta disponibile anche dopo l'eliminazione del
+     * progetto su eScriptorium (Service Mode). Richiede autenticazione `X-API-Key`.
      */
     #[Endpoint(operationId: 'getProcess', title: 'Dettagli trascrizione')]
     #[PathParameter('id', description: 'UUID della trascrizione', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
     #[Response(
         200,
-        description: 'Dettagli trascrizione con stato e testo (se completata)',
-        type: 'array{id: string, status: string, text: string}',
+        description: 'Dettagli trascrizione con stato, formato e testo (se completata)',
+        type: 'array{id: string, status: string, export_format: string, text: string, download_url?: string}',
         examples: [
             'in_progress' => [
                 'id' => '550e8400-e29b-41d4-a716-446655440000',
                 'status' => 'TRANSCRIBING',
+                'export_format' => 'teixml',
                 'text' => '',
             ],
-            'completed' => [
+            'completed_teixml' => [
                 'id' => '550e8400-e29b-41d4-a716-446655440000',
                 'status' => 'COMPLETED',
-                'text' => "In principio creavit Deus caelum et terram.\nTerra autem erat inanis et vacua...",
+                'export_format' => 'teixml',
+                'text' => '<?xml version="1.0" encoding="UTF-8"?><TEI xmlns="http://www.tei-c.org/ns/1.0">...</TEI>',
+                'download_url' => 'http://localhost:8080/api/v1/process/550e8400-e29b-41d4-a716-446655440000/download',
+            ],
+            'completed_text' => [
+                'id' => '550e8400-e29b-41d4-a716-446655440000',
+                'status' => 'COMPLETED',
+                'export_format' => 'text',
+                'text' => "--------------- Page 1 (page1.jpg) ---------------\nIn principio creavit Deus caelum et terram.\nTerra autem erat inanis et vacua...",
+                'download_url' => 'http://localhost:8080/api/v1/process/550e8400-e29b-41d4-a716-446655440000/download',
+            ],
+            'completed_pagexml' => [
+                'id' => '550e8400-e29b-41d4-a716-446655440000',
+                'status' => 'COMPLETED',
+                'export_format' => 'pagexml',
+                'text' => '',
+                'download_url' => 'http://localhost:8080/api/v1/process/550e8400-e29b-41d4-a716-446655440000/download',
             ],
             'failed' => [
                 'id' => '550e8400-e29b-41d4-a716-446655440000',
                 'status' => 'FAILED',
+                'export_format' => 'teixml',
                 'text' => '',
             ],
         ]
@@ -628,10 +690,76 @@ class eScriptoriumController extends Controller
             ], 404);
         }
 
-        return response()->json([
+        $response = [
             'id' => $transcription->id,
             'status' => $transcription->status->getLabel(),
+            'export_format' => $transcription->export_format?->value ?? ExportFormatEnum::TeiXml->value,
             'text' => $transcription->text ?? '',
+        ];
+
+        if ($transcription->export_file_path) {
+            $response['download_url'] = route('escriptorium.process.download', ['id' => $transcription->id]);
+        }
+
+        return response()->json($response);
+    }
+
+    /**
+     * Download Export File
+     *
+     * Scarica il file di export della trascrizione completata.
+     * Il file viene servito direttamente dallo storage del proxy per garantire la disponibilità
+     * anche dopo l'eliminazione del progetto su eScriptorium (Service Mode).
+     *
+     * Il formato del file dipende dal parametro `export_format` scelto:
+     * - **teixml**: file ZIP con i file TEI XML per pagina
+     * - **text**: file TXT con il testo trascritto
+     * - **pagexml**: file ZIP con i file PAGE XML per pagina + METS.xml
+     * - **alto**: file ZIP con i file ALTO XML per pagina + METS.xml
+     * - **openitimarkdown**: file ZIP con i file .mARkdown per pagina
+     */
+    #[Endpoint(operationId: 'downloadExport', title: 'Download file export')]
+    #[PathParameter('id', description: 'UUID della trascrizione', type: 'string', example: '550e8400-e29b-41d4-a716-446655440000')]
+    #[Response(200, description: 'File di export (ZIP o TXT a seconda del formato)')]
+    #[Response(
+        404,
+        description: 'Trascrizione non trovata o file non disponibile',
+        type: 'array{message: string, status: int}',
+        examples: [
+            [
+                'message' => 'Transcription not found',
+                'status' => 404,
+            ],
+        ]
+    )]
+    public function download(Request $request, string $id): BinaryFileResponse|JsonResponse
+    {
+        $apiKey = $request->attributes->get('api_key');
+
+        $transcription = Transcription::where('id', $id)
+            ->where('api_key_id', $apiKey->id)
+            ->first();
+
+        if (! $transcription) {
+            return response()->json([
+                'message' => __('validation.escriptorium.status.not_found'),
+                'status' => 404,
+            ], 404);
+        }
+
+        if (! $transcription->export_file_path || ! Storage::disk('local')->exists($transcription->export_file_path)) {
+            return response()->json([
+                'message' => 'Export file not available',
+                'status' => 404,
+            ], 404);
+        }
+
+        $format = $transcription->export_format ?? ExportFormatEnum::TeiXml;
+        $fullPath = Storage::disk('local')->path($transcription->export_file_path);
+        $filename = basename($transcription->export_file_path);
+
+        return response()->download($fullPath, $filename, [
+            'Content-Type' => $format->mimeType(),
         ]);
     }
 }

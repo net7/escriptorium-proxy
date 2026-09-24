@@ -29,5 +29,6 @@ Route::group(['prefix' => '/v1', 'as' => 'escriptorium.', 'middleware' => 'api.k
         Route::post('/manifest', [eScriptoriumController::class, 'processManifest'])->name('manifest');
         Route::post('/images', [eScriptoriumController::class, 'processImages'])->name('images');
         Route::get('/{id}', [eScriptoriumController::class, 'show'])->name('show');
+        Route::get('/{id}/download', [eScriptoriumController::class, 'download'])->name('download');
     });
 });

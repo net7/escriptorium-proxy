@@ -32,7 +32,7 @@ class NewModelRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'file.types' => __('validation.escriptorium.file.types', ['values' => 'mlmodel']),
+            'file.types' => __('validation.escriptorium.file.types', ['values' => 'mlmodel, safetensors']),
             'file.min' => __('validation.escriptorium.file.min', ['min' => '1kb']),
         ];
     }

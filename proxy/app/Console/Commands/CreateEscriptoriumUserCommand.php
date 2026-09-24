@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 
 class CreateEscriptoriumUserCommand extends Command
 {
@@ -61,21 +62,27 @@ class CreateEscriptoriumUserCommand extends Command
         $hashedPassword = $this->hashPasswordDjango($password);
 
         try {
+            $userData = [
+                'username' => $username,
+                'email' => $email,
+                'password' => $hashedPassword,
+                'first_name' => $firstName,
+                'last_name' => $lastName,
+                'is_superuser' => $isSuperuser,
+                'is_staff' => $isStaff,
+                'is_active' => $isActive,
+                'legacy_mode' => false,
+                'date_joined' => now(),
+                'last_login' => null,
+            ];
+
+            if (Schema::connection('escriptorium')->hasColumn('users_user', 'download_retention_days')) {
+                $userData['download_retention_days'] = 30;
+            }
+
             DB::connection('escriptorium')
                 ->table('users_user')
-                ->insert([
-                    'username' => $username,
-                    'email' => $email,
-                    'password' => $hashedPassword,
-                    'first_name' => $firstName,
-                    'last_name' => $lastName,
-                    'is_superuser' => $isSuperuser,
-                    'is_staff' => $isStaff,
-                    'is_active' => $isActive,
-                    'legacy_mode' => false,
-                    'date_joined' => now(),
-                    'last_login' => null,
-                ]);
+                ->insert($userData);
 
             $this->info("User '{$username}' created successfully!");
             $this->table(

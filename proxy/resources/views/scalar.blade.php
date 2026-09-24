@@ -21,6 +21,38 @@
             --scalar-button-1-hover: var(--theme-accent-hover);
         }
 
+        /* Partner logos bar */
+        .partner-logos {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3rem;
+            padding: 1.5rem 2rem;
+            background: #1a1a2e;
+            border-bottom: 1px solid rgba(139, 92, 246, 0.2);
+        }
+
+        .partner-logos img {
+            height: 80px;
+            object-fit: contain;
+            opacity: 0.9;
+            transition: opacity 0.2s ease;
+        }
+
+        .partner-logos img:hover {
+            opacity: 1;
+        }
+
+        .partner-logos .invert-logo {
+            filter: brightness(0) invert(1);
+        }
+
+        .partner-logos .separator {
+            width: 1px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.15);
+        }
+
         /* Custom scrollbar */
         .scalar-app ::-webkit-scrollbar {
             width: 8px;
@@ -48,6 +80,11 @@
 </head>
 
 <body>
+    <div class="partner-logos">
+        <img src="/images/clarin-it-logo.png" alt="CLARIN-IT" class="invert-logo">
+        <div class="separator"></div>
+        <img src="/images/net7-logo.svg" alt="Net7" class="invert-logo">
+    </div>
     <script id="api-reference" data-url="/docs/api.json"></script>
     <script>
         var configuration = {

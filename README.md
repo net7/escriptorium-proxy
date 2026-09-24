@@ -6,7 +6,7 @@ A Laravel-based proxy application that wraps [eScriptorium](https://gitlab.com/s
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         NGINX (port 8080)                           │
+│                         NGINX (port 8083)                           │
 │                      Reverse Proxy / Load Balancer                  │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │
@@ -53,6 +53,7 @@ A Laravel-based proxy application that wraps [eScriptorium](https://gitlab.com/s
 
 - Docker & Docker Compose v2+
 - Git (with submodule support)
+- OpenSSL (to generate a development application key when none exists)
 - Make (optional, for convenience commands)
 
 ## Quick Start
@@ -83,6 +84,8 @@ This will:
 - **Auto-detect platform** (ARM64 for Apple Silicon, AMD64 for Intel/AMD)
 - Configure Docker Compose files with the correct platform
 - Generate `escriptorium/variables.env` from template with correct settings
+- Create `.env.development` from `.env.development.example` and copy it to `proxy/.env`, preserving existing files
+- Fill missing Laravel `APP_KEY` values in both files, reusing an existing key or generating one for a new installation
 - Create necessary directories
 - Set up pgAdmin configuration
 
@@ -100,9 +103,9 @@ docker compose -f docker-compose.development.yml up -d --build
 
 | Service | URL | Description |
 |---------|-----|-------------|
-| Laravel Proxy | http://localhost:8080 | Main application |
+| Laravel Proxy | http://localhost:8083 | Main application |
 | eScriptorium | http://localhost:8082 | Direct eScriptorium access |
-| API Docs | http://localhost:8080/docs | OpenAPI documentation |
+| API Docs | http://localhost:8083/docs | OpenAPI documentation |
 | phpMyAdmin | http://localhost:8081 | MariaDB management |
 | pgAdmin | http://localhost:5050 | PostgreSQL management |
 | Flower | http://localhost:5555 | Celery task monitor |
@@ -171,7 +174,7 @@ docker compose -f docker-compose.development.yml up -d --build
 APP_NAME="eScriptorium Proxy"
 APP_ENV=local
 APP_DEBUG=true
-APP_URL=http://localhost:8080
+APP_URL=http://localhost:8083
 
 # MariaDB (Laravel database)
 DB_CONNECTION=mariadb
@@ -204,7 +207,7 @@ Generated automatically by `setup.sh`. Key settings:
 ```env
 DOMAIN=localhost
 SECRET_KEY=changeme                    # Change in production!
-CSRF_TRUSTED_ORIGINS=http://localhost:8080,http://localhost:8082
+CSRF_TRUSTED_ORIGINS=http://localhost:8083,http://localhost:8082
 USE_X_FORWARDED_HOST=True
 
 SQL_HOST=postgres

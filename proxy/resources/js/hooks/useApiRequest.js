@@ -65,12 +65,34 @@ export default function useApiRequest(apiKey) {
             if (res.status === 204) {
                 data = null;
             } else {
-                const contentType = res.headers.get('content-type');
+                const contentType = res.headers.get('content-type') || '';
 
-                if (contentType && contentType.includes('application/json')) {
+                if (contentType.includes('application/json')) {
                     const text = await res.text();
                     // Handle empty JSON responses
                     data = text ? JSON.parse(text) : null;
+                } else if (
+                    contentType.includes('application/zip') ||
+                    contentType.includes('application/octet-stream') ||
+                    contentType.includes('application/xml') ||
+                    res.headers.get('content-disposition')?.includes('attachment')
+                ) {
+                    // Binary/download response - trigger browser download
+                    const blob = await res.blob();
+                    const disposition = res.headers.get('content-disposition') || '';
+                    const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+                    const filename = filenameMatch?.[1] || 'download';
+
+                    const downloadUrl = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(downloadUrl);
+
+                    data = { message: `File downloaded: ${filename}`, size: `${(blob.size / 1024).toFixed(1)} KB` };
                 } else {
                     const text = await res.text();
                     // If response body is empty, treat as null

@@ -75,7 +75,7 @@ if [ ! -f "$ESCRIPTORIUM_ENV" ]; then
     sed -i.bak 's/^# USE_X_FORWARDED_HOST=True$/USE_X_FORWARDED_HOST=True/' "$ESCRIPTORIUM_ENV"
 
     # Add CSRF trusted origins for Laravel proxy
-    sed -i.bak 's|^CSRF_TRUSTED_ORIGINS=.*$|CSRF_TRUSTED_ORIGINS=http://localhost:8080,http://localhost:8082|' "$ESCRIPTORIUM_ENV"
+    sed -i.bak 's|^CSRF_TRUSTED_ORIGINS=.*$|CSRF_TRUSTED_ORIGINS=http://localhost:8083,http://localhost:8082|' "$ESCRIPTORIUM_ENV"
 
     # Enable TEI XML export
     sed -i.bak 's/^# EXPORT_TEI_XML=true$/EXPORT_TEI_XML=true/' "$ESCRIPTORIUM_ENV"
@@ -98,16 +98,68 @@ else
 fi
 
 # ----------------------------------------------
-# 3. Setup Laravel Proxy .env (from root .env.development)
+# 3. Setup development and Laravel Proxy environment files
 # ----------------------------------------------
 PROXY_ENV="$ROOT_DIR/proxy/.env"
 ROOT_ENV="$ROOT_DIR/.env.development"
+ROOT_ENV_EXAMPLE="$ROOT_DIR/.env.development.example"
 
-if [ ! -f "$PROXY_ENV" ] && [ -f "$ROOT_ENV" ]; then
+if [ ! -f "$ROOT_ENV" ]; then
+    echo -e "${YELLOW}Creating .env.development from template...${NC}"
+    cp "$ROOT_ENV_EXAMPLE" "$ROOT_ENV"
+    echo -e "${GREEN}Created .env.development${NC}"
+else
+    echo -e "${GREEN}.env.development already exists${NC}"
+fi
+
+# Docker env_file values override Laravel's .env, even when APP_KEY is empty.
+read_app_key() {
+    local value
+    [ -f "$1" ] || return 0
+    value=$(sed -n 's/^APP_KEY=//p' "$1" | head -n 1)
+    value="${value%$'\r'}"
+    case "$value" in
+        ''|'""'|"''") return 0 ;;
+        *) printf '%s' "$value" ;;
+    esac
+}
+
+write_app_key() {
+    local file="$1"
+    local key="$2"
+    local escaped_key
+    if grep -q '^APP_KEY=' "$file"; then
+        escaped_key=$(printf '%s' "$key" | sed 's/[\\&|]/\\&/g')
+        sed -i.bak "s|^APP_KEY=.*$|APP_KEY=${escaped_key}|" "$file"
+        rm -f "$file.bak"
+    else
+        printf '\nAPP_KEY=%s\n' "$key" >> "$file"
+    fi
+}
+
+ROOT_APP_KEY=$(read_app_key "$ROOT_ENV")
+PROXY_APP_KEY=$(read_app_key "$PROXY_ENV")
+
+if [ -z "$ROOT_APP_KEY" ]; then
+    if [ -n "$PROXY_APP_KEY" ]; then
+        ROOT_APP_KEY="$PROXY_APP_KEY"
+        echo -e "${GREEN}Reusing existing Laravel APP_KEY in .env.development${NC}"
+    else
+        ROOT_APP_KEY="base64:$(openssl rand -base64 32)"
+        echo -e "${GREEN}Generated Laravel APP_KEY for development${NC}"
+    fi
+    write_app_key "$ROOT_ENV" "$ROOT_APP_KEY"
+fi
+
+if [ ! -f "$PROXY_ENV" ]; then
     echo -e "${YELLOW}Copying .env.development to proxy/.env...${NC}"
     cp "$ROOT_ENV" "$PROXY_ENV"
     echo -e "${GREEN}Created proxy/.env${NC}"
 elif [ -f "$PROXY_ENV" ]; then
+    if [ -z "$PROXY_APP_KEY" ]; then
+        write_app_key "$PROXY_ENV" "$ROOT_APP_KEY"
+        echo -e "${GREEN}Configured Laravel APP_KEY in proxy/.env${NC}"
+    fi
     echo -e "${GREEN}proxy/.env already exists${NC}"
 fi
 
@@ -184,7 +236,7 @@ echo "     cp .env.production.example .env.production"
 echo "     docker compose -f docker-compose.production.yml up -d --build"
 echo ""
 echo "Access points (Development):"
-echo "  - Laravel Proxy:    http://localhost:8080"
+echo "  - Laravel Proxy:    http://localhost:8083"
 echo "  - eScriptorium:     http://localhost:8082"
 echo "  - phpMyAdmin:       http://localhost:8081"
 echo "  - pgAdmin:          http://localhost:5050"

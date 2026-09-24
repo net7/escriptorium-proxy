@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Contexts\ApiContext;
-use GuzzleHttp\Client;
 use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\UploadedFile;
@@ -11,6 +10,9 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use WebSocket\Client;
+use WebSocket\Middleware\CloseHandler;
+use WebSocket\Middleware\PingResponder;
 
 class eScriptoriumService
 {
@@ -179,22 +181,22 @@ class eScriptoriumService
      * Create a WebSocket client configured for eScriptorium.
      *
      * @param  int|null  $timeout  Connection timeout in seconds (default from config)
-     * @return \WebSocket\Client Configured WebSocket client
+     * @return Client Configured WebSocket client
      *
      * @throws \RuntimeException If connection fails
      */
-    public function createWebSocketClient(?int $timeout = null): \WebSocket\Client
+    public function createWebSocketClient(?int $timeout = null): Client
     {
         $wsUrl = $this->getWebSocketUrl();
         $sessionId = $this->getSessionCookie();
         $origin = rtrim($this->baseUrl, '/');
         $timeoutSec = $timeout ?? config('escriptorium.websocket.timeout', 600);
 
-        $client = new \WebSocket\Client($wsUrl);
+        $client = new Client($wsUrl);
 
         // Add standard middlewares
-        $client->addMiddleware(new \WebSocket\Middleware\CloseHandler);
-        $client->addMiddleware(new \WebSocket\Middleware\PingResponder);
+        $client->addMiddleware(new CloseHandler);
+        $client->addMiddleware(new PingResponder);
 
         // Set handshake headers
         $client->addHeader('Cookie', 'sessionid='.$sessionId);
@@ -259,6 +261,53 @@ class eScriptoriumService
     }
 
     /**
+     * Collect paginated results while keeping requests on the configured endpoint.
+     *
+     * @param  array<string, mixed>  $query
+     * @return array<string, mixed>
+     */
+    private function paginated(string $endpoint, array $query, string $errorMessage): array
+    {
+        $page = 1;
+        $results = [];
+
+        while (true) {
+            $response = $this->client()->get($endpoint, [...$query, 'page' => $page]);
+
+            if (! $response->successful()) {
+                throw new \RuntimeException($errorMessage.': '.$response->body());
+            }
+
+            $data = $response->json();
+            if (! \is_array($data) || ! isset($data['results']) || ! \is_array($data['results'])) {
+                throw new \RuntimeException($errorMessage.': Invalid paginated response');
+            }
+
+            array_push($results, ...$data['results']);
+            $next = $data['next'] ?? null;
+
+            if ($next === null) {
+                return [...$data, 'results' => $results, 'count' => \count($results), 'next' => null, 'previous' => null];
+            }
+
+            if (! \is_string($next)) {
+                throw new \RuntimeException($errorMessage.': Invalid next page');
+            }
+
+            parse_str((string) parse_url($next, PHP_URL_QUERY), $nextQuery);
+            $nextPage = filter_var($nextQuery['page'] ?? null, FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => $page + 1],
+            ]);
+
+            if ($nextPage === false) {
+                throw new \RuntimeException($errorMessage.': Invalid or repeated next page');
+            }
+
+            $page = $nextPage;
+        }
+    }
+
+    /**
      * Get the current authenticated user info from eScriptorium.
      *
      * @return array User info (pk, username, email, etc.)
@@ -285,15 +334,7 @@ class eScriptoriumService
      */
     public function models(): array
     {
-        $response = $this->client()->get(config('escriptorium.api.endpoints.models'));
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium models request failed');
-        }
-
-        $results = $response->json('results') ?? [];
-
-        return $results;
+        return $this->paginated(config('escriptorium.api.endpoints.models'), [], 'eScriptorium models request failed')['results'];
     }
 
     /**
@@ -305,22 +346,14 @@ class eScriptoriumService
      */
     public function scripts(): array
     {
-        $response = $this->client()->get(config('escriptorium.api.endpoints.scripts'));
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium scripts request failed');
-        }
-
-        $results = $response->json('results') ?? [];
-
-        return $results;
+        return $this->paginated(config('escriptorium.api.endpoints.scripts'), [], 'eScriptorium scripts request failed')['results'];
     }
 
     /**
      * Upload a new OCR model to eScriptorium via API.
      *
      * @param  string|null  $name  The model name (uses filename if null)
-     * @param  UploadedFile  $file  The model file (.mlmodel)
+     * @param  UploadedFile  $file  The model file (.mlmodel or .safetensors)
      * @return array The created model data
      *
      * @throws \RuntimeException If the file is invalid or upload fails
@@ -364,7 +397,7 @@ class eScriptoriumService
      * This method is used to force accuracy parsing which is not available via API.
      *
      * @param  string|null  $name  The model name (uses filename if null)
-     * @param  UploadedFile  $file  The model file (.mlmodel)
+     * @param  UploadedFile  $file  The model file (.mlmodel or .safetensors)
      * @return bool True if upload was successful
      *
      * @throws \RuntimeException If the file is invalid, login fails, or upload fails
@@ -385,7 +418,7 @@ class eScriptoriumService
         $loginPage = $browser->get("{$this->baseUrl}/login/");
         $csrfToken = $this->extractCsrfToken($loginPage->body());
 
-        $loginResponse = $browser->asForm()->post("{$this->baseUrl}/login/", [
+        $loginResponse = (clone $browser)->asForm()->post("{$this->baseUrl}/login/", [
             'username' => $this->username,
             'password' => $this->password,
             'csrfmiddlewaretoken' => $csrfToken,
@@ -399,45 +432,34 @@ class eScriptoriumService
         $uploadCsrf = $this->extractCsrfToken($uploadPage->body());
 
         $originalName = $file->getClientOriginalName();
+        $extension = strtolower($file->getClientOriginalExtension());
 
         $baseName = $name
-            ? (Str::endsWith($name, '.mlmodel') ? Str::beforeLast($name, '.mlmodel') : $name)
+            ? (Str::endsWith($name, ['.mlmodel', '.safetensors']) ? pathinfo($name, PATHINFO_FILENAME) : $name)
             : pathinfo($originalName, PATHINFO_FILENAME);
 
-        $filename = "{$baseName}.mlmodel";
+        $filename = "{$baseName}.{$extension}";
+        $stream = fopen($file->getPathname(), 'rb');
 
-        $guzzleClient = new Client([
-            'cookies' => $jar,
-            'allow_redirects' => true,
-            'base_uri' => $this->baseUrl,
-        ]);
+        try {
+            $response = $browser
+                ->withOptions(['allow_redirects' => false])
+                ->withHeaders(['Referer' => "{$this->baseUrl}/models/new/"])
+                ->attach('file', $stream, $filename)
+                ->post("{$this->baseUrl}/models/new/", [
+                    'name' => $baseName,
+                    'csrfmiddlewaretoken' => $uploadCsrf,
+                ]);
+        } finally {
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+        }
 
-        $response = $guzzleClient->post("{$this->baseUrl}/models/new/", [
-            'multipart' => [
-                [
-                    'name' => 'name',
-                    'contents' => $baseName,
-                ],
-                [
-                    'name' => 'csrfmiddlewaretoken',
-                    'contents' => $uploadCsrf,
-                ],
-                [
-                    'name' => 'file',
-                    'contents' => fopen($file->getPathname(), 'r'),
-                    'filename' => $filename,
-                ],
-            ],
-            'headers' => [
-                'Referer' => "{$this->baseUrl}/models/new/",
-            ],
-        ]);
-
-        $statusCode = $response->getStatusCode();
-        $body = $response->getBody()->getContents();
-
-        if ($statusCode < 200 || $statusCode >= 300) {
-            throw new \RuntimeException('eScriptorium browser upload failed: '.$statusCode);
+        // Django redirects to the model list on success; HTTP 200 redisplays an invalid form.
+        if (! in_array($response->status(), [302, 303], true) ||
+            parse_url($response->header('Location'), PHP_URL_PATH) !== parse_url($this->baseUrl.'/models/', PHP_URL_PATH)) {
+            throw new \RuntimeException('eScriptorium browser upload failed: '.$response->status());
         }
 
         return true;
@@ -464,10 +486,14 @@ class eScriptoriumService
     private function getModelType(UploadedFile $file): string
     {
         try {
-            $hexFileContent = Str::of(bin2hex($file->getContent()))->trim();
+            if (strtolower($file->getClientOriginalExtension()) === 'safetensors') {
+                return $this->getSafetensorsModelType($file);
+            }
+
+            $content = $file->getContent();
 
             foreach (self::MODEL_TYPES as $modelType) {
-                if ($hexFileContent->contains(bin2hex($modelType['string']))) {
+                if (str_contains($content, $modelType['string'])) {
                     return $modelType['name'];
                 }
             }
@@ -476,6 +502,36 @@ class eScriptoriumService
         } catch (\Exception $e) {
             throw new \RuntimeException('eScriptorium new model request failed: '.$e->getMessage());
         }
+    }
+
+    private function getSafetensorsModelType(UploadedFile $file): string
+    {
+        $stream = $file->openFile('rb');
+        if ($file->getSize() < 8) {
+            throw new \RuntimeException('Invalid safetensors header');
+        }
+
+        $length = unpack('Plength', $stream->fread(8))['length'];
+        if ($length < 2 || $length > 100_000_000 || $length > $file->getSize() - 8) {
+            throw new \RuntimeException('Invalid safetensors header length');
+        }
+
+        $header = json_decode($stream->fread($length), true, flags: JSON_THROW_ON_ERROR);
+        $metadata = $header['__metadata__']['kraken_meta'] ?? null;
+        $models = is_string($metadata) ? json_decode($metadata, true, flags: JSON_THROW_ON_ERROR) : null;
+        if (! is_array($models)) {
+            throw new \RuntimeException('Missing Kraken model metadata');
+        }
+
+        foreach (['segmentation' => 'segment', 'recognition' => 'recognize'] as $task => $job) {
+            foreach ($models as $model) {
+                if (is_array($model) && in_array($task, (array) ($model['_tasks'] ?? $model['model_type'] ?? []), true)) {
+                    return $job;
+                }
+            }
+        }
+
+        throw new \RuntimeException('Could not determine safetensors model type');
     }
 
     /**
@@ -619,15 +675,9 @@ class eScriptoriumService
             throw new \RuntimeException('eScriptorium tasks request failed: Document ID is required');
         }
 
-        $response = $this->client()->get(config('escriptorium.api.endpoints.tasks'), [
+        return $this->paginated(config('escriptorium.api.endpoints.tasks'), [
             'document' => $documentId,
-        ]);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium check import document status request failed: '.$response->body());
-        }
-
-        return $response->json();
+        ], 'eScriptorium check import document status request failed');
     }
 
     /**
@@ -646,16 +696,9 @@ class eScriptoriumService
 
         $endpoint = str_replace('{document_id}', $documentId, config('escriptorium.api.endpoints.parts'));
 
-        $response = $this->client()->get($endpoint, [
+        return $this->paginated($endpoint, [
             'ordering' => 'order',
-            'paginate_by' => 5000,
-        ]);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium get document parts request failed: '.$response->body());
-        }
-
-        return $response->json();
+        ], 'eScriptorium get document parts request failed');
     }
 
     /**
@@ -1164,13 +1207,7 @@ XML;
             $params['name'] = $name;
         }
 
-        $response = $this->client()->get(config('escriptorium.api.endpoints.projects'), $params);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium get projects request failed: '.$response->body());
-        }
-
-        $results = $response->json('results') ?? [];
+        $results = $this->paginated(config('escriptorium.api.endpoints.projects'), $params, 'eScriptorium get projects request failed')['results'];
 
         // Manual check if API does not support exact name filtering, ensuring we match exactly
         if ($name) {
@@ -1194,13 +1231,7 @@ XML;
             $params['name'] = $name;
         }
 
-        $response = $this->client()->get(config('escriptorium.api.endpoints.documents'), $params);
-
-        if (! $response->successful()) {
-            throw new \RuntimeException('eScriptorium get documents request failed: '.$response->body());
-        }
-
-        $results = $response->json('results') ?? [];
+        $results = $this->paginated(config('escriptorium.api.endpoints.documents'), $params, 'eScriptorium get documents request failed')['results'];
 
         // Manual check for exact name match
         if ($name) {

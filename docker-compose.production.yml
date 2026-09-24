@@ -13,6 +13,8 @@ services:
       - "127.0.0.1:8082:80"
     volumes:
       - proxy-public:/var/www/html/public:ro
+      - proxy-storage:/var/www/html/storage:ro
+      - ./proxy/public/images:/var/www/html/public/images:ro
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
     depends_on:
       proxy-php:
@@ -39,6 +41,7 @@ services:
     volumes:
       - proxy-public:/var/www/html/public
       - proxy-storage:/var/www/html/storage
+      - ./proxy/public/images:/var/www/html/public/images:ro
     env_file:
       - .env.production
     depends_on:
@@ -51,7 +54,6 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
     networks:
       - app-network
     restart: always
@@ -196,7 +198,7 @@ services:
       resources:
         limits:
           cpus: '1'
-          memory: 512M
+          memory: 1G
 
   # ===========================================
   # ESCRIPTORIUM DATABASES
@@ -332,7 +334,7 @@ services:
     volumes:
       - escriptorium-static:/usr/src/app/static
       - escriptorium-media:/usr/src/app/media
-    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu -c 1 --max-tasks-per-child=1"
+    command: "celery -A escriptorium worker -l INFO -E -Ofair --prefetch-multiplier 1 -Q gpu,intensive-inference -c 1 --max-tasks-per-child=1"
     shm_size: '3gb'
     # For GPU support uncomment below:
     # runtime: nvidia
