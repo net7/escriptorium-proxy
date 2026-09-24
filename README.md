@@ -1,432 +1,363 @@
-# eScriptorium Proxy
+<div align="center">
 
-A Laravel-based proxy application that wraps [eScriptorium](https://gitlab.com/scripta/escriptorium), providing a modern API layer and enhanced functionality for document processing and OCR/HTR workflows.
+# 📜 eScriptorium Proxy
 
-## Architecture Overview
+### From historical pages to structured text.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         NGINX (port 8083)                           │
-│                      Reverse Proxy / Load Balancer                  │
-└─────────────────────────────┬───────────────────────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              │                               │
-              ▼                               ▼
-┌─────────────────────────┐     ┌─────────────────────────────────────┐
-│     Laravel Proxy       │     │         eScriptorium                │
-│     (PHP-FPM)           │     │  ┌─────────────────────────────┐    │
-│                         │     │  │  escriptorium-nginx (:8082) │    │
-│  ┌───────────────────┐  │     │  └──────────┬──────────────────┘    │
-│  │   MariaDB         │  │     │             │                       │
-│  │   (Laravel DB)    │  │     │  ┌──────────┴──────────┐            │
-│  └───────────────────┘  │     │  │                     │            │
-│                         │     │  ▼                     ▼            │
-│  ┌───────────────────┐  │     │  escriptorium-web    escriptorium-ws│
-│  │   Queue Worker    │  │     │  (uWSGI :8000)       (Daphne :5000) │
-│  └───────────────────┘  │     │                                     │
-└─────────────────────────┘     │  ┌─────────────────────────────┐    │
-                                │  │   PostgreSQL                │    │
-              ┌─────────────────┤  │   (eScriptorium DB)         │    │
-              │                 │  └─────────────────────────────┘    │
-              ▼                 │                                     │
-┌─────────────────────────┐     │  ┌─────────────────────────────┐    │
-│        Redis            │◄────┤  │   Celery Workers            │    │
-│   (Cache/Queue/Session) │     │  │   - celery-main             │    │
-└─────────────────────────┘     │  │   - celery-gpu              │    │
-                                │  │   - celery-low-priority     │    │
-                                │  │   - celery-live             │    │
-                                │  └─────────────────────────────┘    │
-                                └─────────────────────────────────────┘
-```
+A Laravel API for orchestrating **OCR and handwritten text recognition** with [eScriptorium](https://gitlab.com/scripta/escriptorium): submit images, follow the workflow, retrieve your results.
 
-## Features
+[![Release v1.0.0](https://img.shields.io/badge/Release-v1.0.0-2563eb?style=flat-square)](https://github.com/net7/escriptorium-proxy/releases/tag/v1.0.0) [![eScriptorium v26.07](https://img.shields.io/badge/eScriptorium-v26.07-0d9488?style=flat-square)](https://gitlab.com/scripta/escriptorium/-/tree/v26.07) [![Laravel 12](https://img.shields.io/badge/Laravel-12-ef4444?style=flat-square&logo=laravel&logoColor=white)](proxy/composer.json) [![PHP 8.4 container](https://img.shields.io/badge/PHP-8.4-777BB4?style=flat-square&logo=php&logoColor=white)](docker/Dockerfile.proxy) [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white)](docker-compose.development.yml) [![GPL-3.0 license](https://img.shields.io/badge/License-GPL--3.0-16a34a?style=flat-square)](LICENSE)
 
-- **Laravel Proxy API**: RESTful API for document processing
-- **eScriptorium Integration**: Full OCR/HTR pipeline via eScriptorium
-- **Multi-environment Support**: Development, Staging, Production configurations
-- **Docker-based**: Fully containerized for easy deployment
-- **Queue Processing**: Background job processing for long-running tasks
-- **API Documentation**: OpenAPI/Swagger documentation included
+[🚀 Quick start](#quick-start) · [🔌 API guide](#api-guide) · [🏗️ Architecture](#architecture) · [🌍 Deployment](#deployment) · [🤝 Contributing](#contributing) · [⚖️ License](#license)
 
-## Requirements
+</div>
 
-- Docker & Docker Compose v2+
-- Git (with submodule support)
-- OpenSSL (to generate a development application key when none exists)
-- Make (optional, for convenience commands)
+---
 
-## Quick Start
+## ✨ What you can do
 
-### 1. Clone the repository
+Turn a sequence of eScriptorium operations into a small, asynchronous API workflow.
+
+| | Capability |
+| --- | --- |
+| 🖼️ **Bring your documents** | Submit a IIIF manifest or upload images directly. |
+| 🧠 **Choose your models** | List available writing systems and OCR/HTR models; select recognition and optional segmentation models. |
+| ⚙️ **Let the workers handle it** | Queue import, segmentation, transcription and export, then poll for progress. |
+| 📦 **Export for your workflow** | Retrieve TEI XML, plain text, PAGE XML, ALTO XML or OpenITI mARkdown. |
+| 🔑 **Pick an authentication mode** | Use a proxy API key for service processing, or an eScriptorium token to work in your own account. |
+| 🧭 **Explore the API** | Browse the Scalar reference, generated OpenAPI schema and development debug console. |
+
+> [!TIP]
+> **One workflow, three steps:** submit a document → poll its transcription ID → download the export.
+
+<a id="quick-start"></a>
+
+## 🚀 Quick start
+
+### 1. Get the code
+
+You need **Git**, **Docker with Compose v2 or later**, **Bash** and **OpenSSL**. Make is optional. PHP, Composer and Bun are installed in the application containers.
 
 ```bash
-git clone --recursive <repository-url>
-cd escriptorium
+git clone --recurse-submodules https://github.com/net7/escriptorium-proxy.git
+cd escriptorium-proxy
 ```
 
-If you already cloned without `--recursive`:
+Already cloned? Initialize the pinned eScriptorium checkout **before** running setup:
+
 ```bash
 git submodule update --init --recursive
 ```
 
-### 2. Run setup
+For the published release, add `--branch v1.0.0` to the clone command. Source archives from GitHub do not include the submodule contents.
+
+### 2. Prepare your environment
 
 ```bash
-# Using make
-make setup
-
-# Or manually
 ./scripts/setup.sh
 ```
 
-This will:
-- **Auto-detect platform** (ARM64 for Apple Silicon, AMD64 for Intel/AMD)
-- Configure Docker Compose files with the correct platform
-- Generate `escriptorium/variables.env` from template with correct settings
-- Create `.env.development` from `.env.development.example` and copy it to `proxy/.env`, preserving existing files
-- Fill missing Laravel `APP_KEY` values in both files, reusing an existing key or generating one for a new installation
-- Create necessary directories
-- Set up pgAdmin configuration
+The script detects ARM64 or AMD64, updates the development Compose platform entries, creates missing environment files and fills missing development `APP_KEY` values. It also prepares the pgAdmin configuration and enables TEI export in a newly created eScriptorium environment.
 
-### 3. Start the development environment
+Review `.env.development` and `escriptorium/variables.env` before starting. Existing environment files are preserved; setup does not automatically migrate their settings.
+
+### 3. Start the development stack
 
 ```bash
-# Using make
-make dev
-
-# Or manually
-docker compose -f docker-compose.development.yml up -d --build
+docker compose --env-file .env.development -f docker-compose.development.yml up -d --build
 ```
 
-### 4. Access the application
+The first build includes eScriptorium and its dependencies, so allow time for image builds and database initialization. The Laravel entrypoint installs missing dependencies and runs migrations and seeders.
 
-| Service | URL | Description |
-|---------|-----|-------------|
-| Laravel Proxy | http://localhost:8083 | Main application |
-| eScriptorium | http://localhost:8082 | Direct eScriptorium access |
-| API Docs | http://localhost:8083/docs | OpenAPI documentation |
-| phpMyAdmin | http://localhost:8081 | MariaDB management |
-| pgAdmin | http://localhost:5050 | PostgreSQL management |
-| Flower | http://localhost:5555 | Celery task monitor |
-| Vite | http://localhost:5173 | Frontend dev server |
+> [!IMPORTANT]
+> Keep `--env-file` in your Compose commands. A service's `env_file:` loads variables into that container; `--env-file` also supplies values for `${...}` substitutions in the Compose file, including database credentials.
 
-## Project Structure
+### 4. Open the tools
 
+These addresses apply to the **development** configuration:
+
+| Tool | Address |
+| --- | --- |
+| 📚 Scalar API reference | [localhost:8083](http://localhost:8083) |
+| 🧪 Interactive debug console | [localhost:8083/debug](http://localhost:8083/debug) |
+| 📖 Scramble API reference | [localhost:8083/docs/api](http://localhost:8083/docs/api) |
+| 🧾 OpenAPI JSON | [localhost:8083/docs/api.json](http://localhost:8083/docs/api.json) |
+| 📜 eScriptorium interface | [localhost:8082](http://localhost:8082) |
+| 🗄️ phpMyAdmin | [localhost:8081](http://localhost:8081) |
+| 🐘 pgAdmin | [localhost:5050](http://localhost:5050) |
+| 🌸 Flower task monitor | [localhost:5555](http://localhost:5555) |
+| ⚡ Vite+ development server | [localhost:5173](http://localhost:5173) |
+
+The initial eScriptorium account is created from `DJANGO_SU_NAME` and `DJANGO_SU_PASSWORD` in `escriptorium/variables.env` during the first database initialization. Changing those variables later does not update an existing account. Development templates contain example credentials and are intended for a trusted local environment.
+
+<a id="api-guide"></a>
+
+## 🔌 API guide
+
+The base URL in development is **`http://localhost:8083/api/v1`**. Every API endpoint requires the `X-API-Key` header.
+
+### 🔑 Two ways to authenticate
+
+| Mode | Credential | Project lifecycle |
+| --- | --- | --- |
+| **Service mode** | A proxy key generated with `apikey:generate` | Uses the configured service account. Temporary eScriptorium projects are cleaned up; exported files are retained in proxy storage. |
+| **Direct mode** | Your personal eScriptorium API token | Runs as your eScriptorium user and preserves projects. An existing `document_id` can be reused when accessible to your account. |
+
+Generate a proxy key:
+
+```bash
+docker compose --env-file .env.development -f docker-compose.development.yml exec proxy-php \
+  php artisan apikey:generate "My integration" --permissions=up,models,scripts,process
 ```
-.
-├── docker/                     # Docker configuration files
-│   ├── nginx/
-│   │   ├── Dockerfile
-│   │   ├── nginx.conf          # Laravel proxy nginx config
-│   │   └── escriptorium.conf   # eScriptorium nginx config
-│   ├── pgadmin/
-│   │   ├── servers.json
-│   │   └── pgpass
-│   ├── Dockerfile.proxy        # Laravel PHP-FPM image
-│   └── entrypoint.sh           # Container startup script
-│
-├── escriptorium/               # eScriptorium submodule (DO NOT MODIFY)
-│   ├── variables.env           # Runtime config (generated by setup.sh)
-│   └── ...
-│
-├── proxy/                      # Laravel application
-│   ├── app/
-│   ├── config/
-│   │   └── database.php        # Database connections config
-│   ├── routes/
-│   └── ...
-│
-├── scripts/
-│   └── setup.sh                # Initial setup script
-│
+
+Save the generated key: its full value is shown only once. The command also supports `--rate-limit` and `--expires`; `apikey:list` and `apikey:revoke` manage existing keys. See [API key management](proxy/docs/api-keys.md) for details.
+
+For direct mode, obtain a token from your eScriptorium profile. The proxy needs access to that instance's PostgreSQL database, and `ESCRIPTORIUM_DJANGO_SECRET_KEY` must match its Django `SECRET_KEY`.
+
+### 🛤️ Available endpoints
+
+| Method | Path, relative to `/api/v1` | Purpose |
+| --- | --- | --- |
+| `GET` | `/up` | Check the eScriptorium connection |
+| `GET` | `/models` | List available models |
+| `GET` | `/scripts` | List writing systems |
+| `POST` | `/process/manifest` | Start processing from a IIIF manifest |
+| `POST` | `/process/images` | Start processing uploaded images |
+| `GET` | `/process/{id}` | Read progress and results |
+| `GET` | `/process/{id}/download` | Download the exported file |
+
+Try a first request, replacing the placeholder with your key:
+
+```bash
+curl --fail --silent --show-error \
+  -H "Accept: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  http://localhost:8083/api/v1/models
+```
+
+A processing request returns a `transcription_id`. Poll `/process/{id}` with the same credential until `status` is `COMPLETED` or `FAILED`; completed results expose a `download_url` when the export is available. Downloads require authentication too.
+
+Use the running [API reference](http://localhost:8083) for request bodies and model IDs from your instance. For manifest requests, set `pages` explicitly: omitting it currently selects pages **1–10**. The proxy's model-upload route is currently disabled; manage model uploads in eScriptorium.
+
+### 📦 Export formats
+
+Set `export_format` when submitting a processing request:
+
+| Value | Download | Content in the status response's `text` field |
+| --- | --- | --- |
+| `teixml` — default | ZIP of TEI XML files | Merged TEI XML |
+| `text` | TXT | Plain text |
+| `pagexml` | ZIP of PAGE XML files | Empty |
+| `alto` | ZIP of ALTO XML files | Empty |
+| `openitimarkdown` | ZIP of OpenITI mARkdown files | Empty |
+
+Enable the corresponding eScriptorium export features in `escriptorium/variables.env`: `EXPORT_TEI_XML=true` for TEI and `EXPORT_OPENITI_MARKDOWN=true` for OpenITI. Fresh setup enables TEI; review existing files and enable OpenITI explicitly when needed.
+
+<a id="architecture"></a>
+
+## 🏗️ How it fits together
+
+The project currently pins **eScriptorium v26.07**. The proxy uses **Laravel 12** in a **PHP 8.4** container; the debug interface uses **React 19**, **Inertia 2**, **Tailwind CSS 4** and **Vite+**, with Bun for frontend dependencies.
+
+```mermaid
+flowchart LR
+    Client["🖼️ Images / IIIF"] --> Proxy["🔌 Laravel API"]
+    Proxy --> Queue["⚙️ Background jobs"]
+    Queue --> ES["📜 eScriptorium + Celery"]
+    ES --> Exports["📦 Exported results"]
+
+    classDef entry fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef proxy fill:#ede9fe,stroke:#7c3aed,color:#2e1065
+    classDef engine fill:#ccfbf1,stroke:#0d9488,color:#134e4a
+    classDef data fill:#fef3c7,stroke:#d97706,color:#78350f
+    class Client entry
+    class Proxy,Queue proxy
+    class ES engine
+    class Exports data
+```
+
+This is the processing flow: NGINX fronts the API, and Laravel workers retrieve and store the exports that clients download.
+
+- **Laravel** stores API keys and transcription records in MariaDB, orchestrates processing, and serves exports from proxy storage.
+- **eScriptorium** performs OCR/HTR, with PostgreSQL for application data and a separate media volume for files.
+- **Redis** supports both applications' background processing. Celery workers consume `default`, `low-priority`, `live` and `gpu,intensive-inference` queues.
+- **PostgreSQL access includes writes:** the proxy reads tokens and account data, creates Django sessions for direct-mode WebSockets, and provides an account-creation command.
+
+Despite its name, `celery-gpu` is configured with `KRAKEN_TRAINING_DEVICE=cpu` in the supplied environments. GPU acceleration requires additional device and runtime configuration.
+
+<details>
+<summary>🗂️ Repository map</summary>
+
+```text
+escriptorium-proxy/
+├── proxy/                         Laravel API and React debug interface
+│   ├── app/                       Controllers, jobs, services and commands
+│   ├── resources/                 Frontend components and views
+│   ├── routes/                    Public API and web routes
+│   ├── docs/                      API key documentation
+│   └── tests/                     Proxy tests
+├── escriptorium/                  Pinned upstream Git submodule
+├── docker/                        Proxy image, NGINX and container setup
+├── scripts/                       Environment setup and its tests
 ├── docker-compose.development.yml
 ├── docker-compose.staging.yml
 ├── docker-compose.production.yml
-│
-├── .env.development            # Development environment variables
-├── .env.development.example
-├── .env.staging.example
-├── .env.production.example
-│
-└── Makefile                    # Convenience commands
+├── .env.*.example                 Environment templates
+└── Makefile                       Optional command shortcuts
 ```
 
-## Configuration
+The repository also retains upstream application files and an older `docker-compose.yml`. For the proxy stack, use the explicitly named environment-specific Compose files shown in this README.
 
-### Environment Files
+</details>
 
-| File | Purpose | Git Tracked |
-|------|---------|-------------|
-| `.env.development` | Development settings | No (gitignored) |
-| `.env.staging` | Staging settings | No (gitignored) |
-| `.env.production` | Production settings | No (gitignored) |
-| `.env.*.example` | Template files | Yes |
-| `escriptorium/variables.env` | eScriptorium runtime config | No |
-| `proxy/.env` | Laravel local config | No |
+<a id="deployment"></a>
 
-### Key Environment Variables
+## 🌍 Configuration & deployment
 
-#### Laravel Proxy (`.env.development`)
+### Environment files
 
-```env
-# Application
-APP_NAME="eScriptorium Proxy"
-APP_ENV=local
-APP_DEBUG=true
-APP_URL=http://localhost:8083
+| File | Role |
+| --- | --- |
+| `.env.development`, `.env.staging`, `.env.production` | Proxy settings and Compose interpolation values for the selected environment |
+| `proxy/.env` | Local Laravel settings; initially copied from the development environment |
+| `escriptorium/variables.env` | Django, PostgreSQL, worker and export settings for eScriptorium |
+| `.env.*.example` | Versioned templates; copy and customize for your deployment |
 
-# MariaDB (Laravel database)
-DB_CONNECTION=mariadb
-DB_HOST=mariadb
-DB_PORT=3306
-DB_DATABASE=proxy
-DB_USERNAME=laravel
-DB_PASSWORD=secret
+Keep database credentials consistent between the selected root environment and `escriptorium/variables.env`. `SQL_HOST` must be `postgres` for this stack. Proxy service-account settings are `ESCRIPTORIUM_USERNAME` and `ESCRIPTORIUM_PASSWORD`; set them to valid eScriptorium credentials.
 
-# PostgreSQL (eScriptorium database - read access)
-POSTGRES_HOST=postgres
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=escriptorium
+Set `ESCRIPTORIUM_DJANGO_SECRET_KEY` to the same value as Django's `SECRET_KEY`. The proxy's PostgreSQL connection must permit the session writes used by direct mode.
 
-# Redis
-REDIS_HOST=redis
-REDIS_PORT=6379
+### Environment differences
 
-# eScriptorium Internal URLs
-ESCRIPTORIUM_URL=http://escriptorium-web:8000
-ESCRIPTORIUM_WEBSOCKET_BASE_URL=http://escriptorium-nginx
-```
+| | Development | Staging | Production |
+| --- | --- | --- | --- |
+| Proxy HTTP binding | `8083` | `80` | `127.0.0.1:8082` |
+| eScriptorium HTTP binding | `8082` | Internal only | `127.0.0.1:8083` |
+| Frontend | Vite+ live reload | Built assets | Built assets |
+| Admin tools | phpMyAdmin, pgAdmin, Flower | phpMyAdmin, Flower | Not included |
+| `/debug` | Available with `APP_ENV=local` | Available with `APP_ENV=staging` | Disabled |
+| Container platform | Set by setup | Host architecture | Host architecture |
 
-#### eScriptorium (`escriptorium/variables.env`)
+Production HTTP listeners bind to loopback and are intended to sit behind a host reverse proxy. Configure HTTPS there and forward the appropriate host/protocol headers. Staging and production generate HTTPS URLs, so configure HTTPS for both deployed environments.
 
-Generated automatically by `setup.sh`. Key settings:
+### Start a deployment
 
-```env
-DOMAIN=localhost
-SECRET_KEY=changeme                    # Change in production!
-CSRF_TRUSTED_ORIGINS=http://localhost:8083,http://localhost:8082
-USE_X_FORWARDED_HOST=True
-
-SQL_HOST=postgres
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=escriptorium
-
-DJANGO_SU_NAME=admin
-DJANGO_SU_EMAIL=admin@admin.com
-DJANGO_SU_PASSWORD=admin               # Change in production!
-```
-
-## Database Connections
-
-Laravel is configured with two database connections:
-
-1. **mariadb** (default): Laravel's own database for users, API keys, jobs, etc.
-2. **escriptorium**: Read-only access to eScriptorium's PostgreSQL database
-
-```php
-// Using the escriptorium connection
-$documents = DB::connection('escriptorium')
-    ->table('core_document')
-    ->get();
-```
-
-## Makefile Commands
-
-```bash
-# Setup
-make setup              # Run initial setup
-
-# Development
-make dev                # Start development environment
-make dev-logs           # Follow logs
-make dev-stop           # Stop containers
-make dev-restart        # Restart containers
-make dev-shell          # Open shell in Laravel container
-make dev-artisan cmd="migrate"  # Run artisan command
-make dev-tinker         # Open Laravel Tinker
-
-# Staging
-make staging            # Start staging environment
-make staging-logs       # Follow staging logs
-make staging-stop       # Stop staging
-
-# Production
-make production         # Start production environment
-make production-logs    # Follow production logs
-make production-stop    # Stop production
-
-# Database
-make db-migrate         # Run migrations
-make db-seed            # Run seeders
-make db-fresh           # Fresh migrate with seeders
-
-# Queue
-make queue-restart      # Restart Laravel queue workers
-make celery-restart     # Restart Celery workers
-
-# Utilities
-make ps                 # Show running containers
-make logs ENV=staging   # Show logs for specific environment
-make clean              # Remove all containers and volumes
-make rebuild            # Rebuild without cache
-make help               # Show all commands
-```
-
-## Platform Support
-
-The setup script automatically detects your system architecture:
-
-| Architecture | Platform | Typical Systems |
-|--------------|----------|-----------------|
-| arm64/aarch64 | `linux/arm64` | Apple Silicon (M1/M2/M3), ARM servers |
-| x86_64/amd64 | `linux/amd64` | Intel/AMD processors, most cloud VMs |
-
-The platform is configured in `docker-compose.development.yml` during setup. To reconfigure:
-
-```bash
-# Re-run setup to auto-detect
-./scripts/setup.sh
-
-# Or manually edit docker-compose.development.yml
-# Change: platform: linux/arm64
-# To:     platform: linux/amd64
-```
-
-**Note**: Staging and Production docker-compose files don't specify a platform, so they use the host's native architecture automatically.
-
-## Environments
-
-### Development
-
-- Hot reload enabled for Laravel (via volume mounts)
-- Vite dev server for frontend assets
-- Debug tools available (phpMyAdmin, pgAdmin, Flower)
-- Relaxed resource limits
-
-```bash
-make dev
-```
-
-### Staging
-
-- Production-like configuration
-- Pre-built assets
-- Flower available with basic auth
-- Moderate resource limits
-
-```bash
-cp .env.staging.example .env.staging
-# Edit .env.staging with your settings
-make staging
-```
-
-### Production
-
-- Optimized images with OPcache
-- No debug tools exposed
-- Health checks enabled
-- Strict resource limits
-- Multiple queue worker replicas
+Run the clone, submodule and setup steps first. For a new production environment:
 
 ```bash
 cp .env.production.example .env.production
-# Edit .env.production with secure passwords
-make production
+# Edit .env.production and escriptorium/variables.env before continuing.
+docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
 ```
 
-## API Documentation
+For staging, use `.env.staging.example`, `.env.staging` and `docker-compose.staging.yml` instead. Use a separate checkout/environment for each deployment.
 
-API documentation is available at `/docs` when the application is running.
+> [!IMPORTANT]
+> Set a non-empty, persistent Laravel `APP_KEY` in the selected root environment file. Setup generates it for **development only**. For a new staging or production installation, generate a key with `openssl rand -base64 32` and store it as `APP_KEY=base64:<generated-value>`. Keep existing keys when updating an installation.
 
-The API provides endpoints for:
-- Document management
-- Image upload and processing
-- OCR/HTR model listing and execution
-- Process status tracking
+Before exposing a deployment, replace template passwords and secrets, set public `APP_URL`, `DOMAIN` and `CSRF_TRUSTED_ORIGINS`, and configure backups for both databases and stored files. The API documentation is public by default; restrict it at the application or reverse proxy if required.
 
-Authentication is via API keys generated through the Laravel application.
+<details>
+<summary>🛠️ Everyday commands & troubleshooting</summary>
 
-## Troubleshooting
-
-### Containers won't start
+Use the same environment file and Compose file that started your stack. For development:
 
 ```bash
-# Check logs
-docker compose -f docker-compose.development.yml logs
+# Check services and follow logs.
+docker compose --env-file .env.development -f docker-compose.development.yml ps
+docker compose --env-file .env.development -f docker-compose.development.yml logs -f proxy-php proxy-queue
 
-# Rebuild from scratch
-make clean
-make dev
+# Open a shell or restart workers.
+docker compose --env-file .env.development -f docker-compose.development.yml exec proxy-php sh
+docker compose --env-file .env.development -f docker-compose.development.yml restart proxy-queue
+
+# Stop containers while retaining named data volumes.
+docker compose --env-file .env.development -f docker-compose.development.yml down
 ```
 
-### Database connection issues
+| Symptom | What to check |
+| --- | --- |
+| Database connection failures | Matching credentials, `SQL_HOST=postgres`, and MariaDB/PostgreSQL health in `compose ps`. |
+| Authentication errors | The `X-API-Key` header, proxy-key permissions/expiry and valid service-account credentials. |
+| Direct-mode export failures | Matching Django secret keys, PostgreSQL session-write access and the internal WebSocket URL. |
+| Processing remains pending | `proxy-queue` and the Celery workers, including `celery-gpu` for intensive inference. |
+| Missing API docs | Use `/`, `/docs/api` or `/docs/api.json`; `/docs` is not the documentation route. |
+| Missing frontend assets | Check the `proxy-vite` service in development and the production asset build logs. |
+
+`make help` lists the optional shortcuts. They do not pass `--env-file`, so use the explicit Compose commands above when loading environment-specific interpolation values.
+
+**Data deletion:** `make clean` removes volumes and local images across all three configurations; `make clean-volumes` deletes the selected environment's volumes, and `make db-fresh` recreates the Laravel database. These are reset operations, not routine troubleshooting steps.
+
+</details>
+
+## 📚 Further reading
+
+| Resource | What it covers |
+| --- | --- |
+| [API key management](proxy/docs/api-keys.md) | Key generation, permissions, expiry and revocation |
+| [Proxy architecture](ARCHITETTURA_PROXY_ESCRIPTORIUM.md) 🇮🇹 | Components, authentication modes and asynchronous processing |
+| [How the proxy works](FUNZIONAMENTO_PROXY_ESCRIPTORIUM.md) 🇮🇹 | Workflow and integration concepts |
+| [Releases](https://github.com/net7/escriptorium-proxy/releases) | Versioned snapshots and release notes |
+| [Upstream eScriptorium](https://gitlab.com/scripta/escriptorium) | The underlying transcription platform |
+
+For exact request fields and enabled routes, use the API reference generated by your running installation.
+
+<a id="contributing"></a>
+
+## 🤝 Contributing
+
+Bug reports, documentation improvements and focused pull requests are welcome.
+
+1. **Discuss the change.** Check [existing issues](https://github.com/net7/escriptorium-proxy/issues), or open one with the expected behavior and a reproducible example.
+2. **Fork and branch from `main`.** Include the eScriptorium submodule when cloning. Keep upstream changes separate from proxy changes.
+3. **Make a focused contribution.** Update documentation and add relevant tests when changing behavior.
+4. **Check your work.** Run the applicable checks below and describe their results in your pull request.
+5. **Open a PR against `main`.** Explain the problem, the resulting behavior and any configuration or migration changes.
+
+### 🧪 Development checks
+
+With PHP 8.4 (including `pdo_sqlite`), Composer and the proxy dependencies available locally, run from `proxy/`:
 
 ```bash
-# Check if databases are healthy
-docker compose -f docker-compose.development.yml ps
-
-# MariaDB should show "healthy"
-# PostgreSQL should show "healthy"
+composer test
+composer exec pint -- --test
 ```
 
-### eScriptorium not accessible
-
-1. Check if `escriptorium/variables.env` exists and has correct settings
-2. Verify `SQL_HOST=postgres` (not `db`)
-3. Check Celery workers are running:
-   ```bash
-   docker compose -f docker-compose.development.yml logs celery-main
-   ```
-
-### Permission issues
+The test configuration uses an in-memory SQLite database. For the setup-script tests, run from the repository root with Python 3:
 
 ```bash
-# Fix storage permissions
-docker compose -f docker-compose.development.yml exec proxy-php \
-    chmod -R 775 storage bootstrap/cache
+python3 -m unittest discover -s scripts/tests
 ```
 
-### Reset everything
+Frontend changes live in `proxy/resources/`. The `proxy-vite` development service reloads them; validate a frontend build with:
 
 ```bash
-make clean
-rm escriptorium/variables.env
-rm proxy/.env
-make setup
-make dev
+docker compose --env-file .env.development -f docker-compose.development.yml exec proxy-vite bun run build
 ```
 
-## Development Workflow
+Include your version, environment and sanitized logs when reporting a problem. Keep credentials, API keys, local environment files and document data out of commits and public reports.
 
-1. **Make changes** to Laravel code in `proxy/`
-2. **Test locally** with `make dev`
-3. **Run tests**: `make dev-artisan cmd="test"`
-4. **Check logs**: `make dev-logs`
+## 💙 Acknowledgements
 
-For frontend development:
-1. Vite dev server runs on port 5173
-2. Changes to `proxy/resources/` auto-reload
-3. Build for production: `docker compose exec proxy-php bun run build`
+Developed by [Net7](https://github.com/net7), building on the work of the [eScriptorium project](https://gitlab.com/scripta/escriptorium) and its community. Thank you to everyone who contributes code, documentation, testing and feedback.
 
-## Security Notes
+Meet the [contributors](https://github.com/net7/escriptorium-proxy/graphs/contributors).
 
-For production deployments:
+<a id="license"></a>
 
-1. **Change all default passwords** in `.env.production` and `escriptorium/variables.env`
-2. **Generate a new APP_KEY**: `php artisan key:generate`
-3. **Use strong SECRET_KEY** for Django
-4. **Enable HTTPS** via nginx SSL configuration
-5. **Restrict network access** to internal services
-6. **Set up proper backups** for MariaDB and PostgreSQL volumes
+## ⚖️ License
 
-## License
+The root license for this repository is the **GNU General Public License v3.0**. See [LICENSE](LICENSE) for the full terms.
 
-[Add your license here]
+The eScriptorium submodule and third-party components retain their own licenses and copyright notices.
 
-## Contributing
+---
 
-[Add contribution guidelines here]
+<div align="center">
+
+**📜 Historical documents. 🔌 A practical API. 📦 Reusable results.**
+
+[Explore the latest release](https://github.com/net7/escriptorium-proxy/releases/latest) · [Report an issue](https://github.com/net7/escriptorium-proxy/issues)
+
+</div>
