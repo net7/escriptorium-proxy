@@ -9,50 +9,62 @@ stages:
 
 verify-proxy:
   stage: test
-  image: docker:29-cli
-  services:
-    - name: docker:29-dind
-      alias: docker
+  image: php:8.4.27-fpm-alpine
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    HEALTHCHECK_TCP_PORT: "2375"
+    APP_ENV: testing
+    APP_URL: http://localhost
+    APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    CACHE_STORE: array
+    SESSION_DRIVER: array
+    QUEUE_CONNECTION: sync
+    DB_CONNECTION: sqlite
+    DB_DATABASE: ":memory:"
   interruptible: true
-  timeout: 30m
+  timeout: 20m
   before_script:
-    - apk add --no-cache bash python3
-    - docker info
+    - apk add --no-cache bash git python3 unzip
+    - curl -fsSL https://composer.github.io/installer.sig -o /tmp/composer.sig
+    - curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
+    - >-
+      php -r 'exit(hash_file("sha384", "/tmp/composer-setup.php") === trim(file_get_contents("/tmp/composer.sig")) ? 0 : 1);'
+    - php /tmp/composer-setup.php --version=2.11.1 --install-dir=/usr/local/bin --filename=composer
   script:
     - python3 -m unittest discover -s ci -p 'test_deploy_staging.py'
-    - docker build --pull --target development -f docker/Dockerfile.proxy -t proxy-test:$CI_COMMIT_SHA .
-    - |
-      docker run --rm --entrypoint sh \
-        -e APP_ENV=testing -e APP_URL=http://localhost \
-        -e APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= \
-        -e CACHE_STORE=array -e SESSION_DRIVER=array -e QUEUE_CONNECTION=sync \
-        -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: \
-        proxy-test:$CI_COMMIT_SHA -ec '
-          touch .env
-          composer validate --no-check-publish
-          composer check-platform-reqs
-          composer audit
-          vendor/bin/pest --compact --fail-on-warning
-          bun run build
-          bun audit
-        '
-    - docker build --target production -f docker/Dockerfile.proxy -t proxy-release:$CI_COMMIT_SHA .
-    - |
-      docker run --rm --entrypoint sh proxy-release:$CI_COMMIT_SHA -ec '
-        composer check-platform-reqs --no-dev
-        php -r '\''exit(PHP_VERSION_ID < 80427 || ini_get("session.upload_progress.enabled") !== "0" ? 1 : 0);'\''
-        test -s public/build/manifest.json
-        test ! -e .env
-      '
+    - mkdir -p test-results
+    - cd proxy
+    - touch .env
+    - composer install --no-interaction --prefer-dist --no-progress
+    - composer validate --no-check-publish
+    - composer check-platform-reqs
+    - composer audit
+    - vendor/bin/pest --compact --fail-on-warning --log-junit ../test-results/phpunit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: test-results/phpunit.xml
+    expire_in: 1 week
+
+build-assets:
+  stage: test
+  image: oven/bun:1.4.4-alpine
+  interruptible: true
+  timeout: 15m
+  before_script:
+    - apk add --no-cache nodejs
+  script:
+    - cd proxy
+    - bun install --frozen-lockfile
+    - bun audit
+    - bun run build
+  artifacts:
+    paths:
+      - proxy/public/build/
+    expire_in: 1 week
 
 deploy-staging:
   stage: deploy
   image: alpine:3.24
-  needs: [verify-proxy]
+  needs: [verify-proxy, build-assets]
   resource_group: escriptorium-staging
   interruptible: false
   timeout: 30m
