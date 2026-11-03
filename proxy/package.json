@@ -9,15 +9,15 @@
     "devDependencies": {
         "@tailwindcss/vite": "^4.3.4",
         "axios": "^1.21.0",
-        "concurrently": "^9.2.5",
-        "laravel-vite-plugin": "^2.1.0",
+        "concurrently": "^10.0.6",
+        "laravel-vite-plugin": "^3.2.0",
         "tailwindcss": "^4.3.4",
         "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
         "vite-plus": "1.4.0"
     },
     "dependencies": {
-        "@inertiajs/react": "^2.3.29",
-        "@vitejs/plugin-react": "^5.2.0",
+        "@inertiajs/react": "^3.11.0",
+        "@vitejs/plugin-react": "^6.2.1",
         "react": "^19.3.1",
         "react-dom": "^19.3.1"
     },

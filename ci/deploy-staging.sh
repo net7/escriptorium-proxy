@@ -26,7 +26,7 @@ release="escriptorium-proxy-release:$revision"
 docker build --pull --target production -f docker/Dockerfile.proxy -t "$release" .
 docker run --rm --entrypoint sh "$release" -ec '
     composer check-platform-reqs --no-dev
-    php -r '\''exit(PHP_VERSION_ID < 80427 || ini_get("session.upload_progress.enabled") !== "0" ? 1 : 0);'\''
+    php -r '\''exit(PHP_VERSION_ID < 80512 || ini_get("session.upload_progress.enabled") !== "0" ? 1 : 0);'\''
     test -s public/build/manifest.json
     test ! -e .env
 '
@@ -78,7 +78,7 @@ docker tag "$release" escriptorium-proxy-queue:latest
 "${compose[@]}" restart nginx
 
 for container in $("${compose[@]}" ps -q proxy-php proxy-queue); do
-    docker exec "$container" php -r 'echo "PHP ".PHP_VERSION.PHP_EOL; exit(PHP_VERSION_ID < 80427 || ini_get("session.upload_progress.enabled") !== "0" ? 1 : 0);'
+    docker exec "$container" php -r 'echo "PHP ".PHP_VERSION.PHP_EOL; exit(PHP_VERSION_ID < 80512 || ini_get("session.upload_progress.enabled") !== "0" ? 1 : 0);'
     docker exec "$container" php artisan --version
 done
 php_container=$("${compose[@]}" ps -q proxy-php)

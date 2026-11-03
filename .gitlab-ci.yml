@@ -9,7 +9,7 @@ stages:
 
 verify-proxy:
   stage: test
-  image: php:8.4.27-fpm-alpine
+  image: php:8.5.12-fpm-alpine
   variables:
     APP_ENV: testing
     APP_URL: http://localhost

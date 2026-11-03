@@ -7,7 +7,5 @@
         "claude_code",
         "codex"
     ],
-    "guidelines": [
-        "inertiajs/inertia-laravel"
-    ]
+    "guidelines": true
 }
