@@ -23,21 +23,24 @@ wait_for_db() {
 # Run composer install if vendor is empty or missing
 if [ ! -d "vendor" ] || [ -z "$(ls -A vendor 2>/dev/null)" ]; then
     echo "📦 Installing Composer dependencies..."
-    composer install --no-interaction --prefer-dist --optimize-autoloader
+    if [ "$APP_ENV" = "production" ] || [ "$APP_ENV" = "staging" ]; then
+        composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+    else
+        composer install --no-interaction --prefer-dist --optimize-autoloader
+    fi
 fi
 
-# Run bun install if node_modules is empty or missing
-if [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then
-    echo "📦 Installing Bun dependencies..."
-    bun install
-fi
-
-# Build assets for production/staging
+# Production images already contain built assets and deliberately omit
+# node_modules. Only install build dependencies when assets are missing.
 if [ "$APP_ENV" = "production" ] || [ "$APP_ENV" = "staging" ]; then
-    if [ ! -d "public/build" ] || [ -z "$(ls -A public/build 2>/dev/null)" ]; then
+    if [ ! -f "public/build/manifest.json" ]; then
         echo "🔨 Building assets..."
+        bun install --frozen-lockfile
         bun run build
     fi
+elif [ ! -d "node_modules" ] || [ -z "$(ls -A node_modules 2>/dev/null)" ]; then
+    echo "📦 Installing Bun dependencies..."
+    bun install --frozen-lockfile
 fi
 
 # Wait for database
