@@ -1,148 +1,86 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "develop" || $CI_COMMIT_BRANCH == "stage"'
+
 stages:
   - test
-  - build
   - deploy
 
-lint:
-  image: python:3.8
+verify-proxy:
   stage: test
-
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-
-  before_script:
-    - pip install pre-commit
-
-  script:
-    - pre-commit run -a
-
-tests:
-  stage: test
-  image: registry.gitlab.com/scripta/escriptorium/base:kraken529
-
-  # Skip tests for base tags since the tests are likely to fail if any api
-  # of one of the modules changed
-  # and the tests will be run on the actual build anyway
-  rules:
-    - if: '$CI_COMMIT_TAG !~ /^base-.*/ && $LANDING == null'
-      when: on_success
-    - when: never
-  services:
-    - postgres:15
-    - redis:alpine
-
+  image: php:8.5.12-fpm-alpine
   variables:
-    # Databases settings
-    REDIS_HOST: redis
-    REDIS_PORT: 6379
-    SQL_HOST: postgres
-    POSTGRES_DB: escriptorium
-    POSTGRES_USER: postgres
-    POSTGRES_PASSWORD: postgres
-
-    # Pip cache
-    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-
-  cache:
-    paths:
-      - .cache/pip
-
-  # except:
-  #   - schedules
-
+    APP_ENV: testing
+    APP_URL: http://localhost
+    APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    CACHE_STORE: array
+    SESSION_DRIVER: array
+    QUEUE_CONNECTION: sync
+    DB_CONNECTION: sqlite
+    DB_DATABASE: ":memory:"
+  interruptible: true
+  timeout: 20m
+  before_script:
+    - apk add --no-cache bash git python3 unzip
+    - curl -fsSL https://composer.github.io/installer.sig -o /tmp/composer.sig
+    - curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
+    - >-
+      php -r 'exit(hash_file("sha384", "/tmp/composer-setup.php") === trim(file_get_contents("/tmp/composer.sig")) ? 0 : 1);'
+    - php /tmp/composer-setup.php --version=2.11.1 --install-dir=/usr/local/bin --filename=composer
   script:
-    - python app/manage.py test -v 2 users api versioning imports core
+    - python3 -m unittest discover -s ci -p 'test_deploy_staging.py'
+    - mkdir -p test-results
+    - cd proxy
+    - touch .env
+    - composer install --no-interaction --prefer-dist --no-progress
+    - composer validate --no-check-publish
+    - composer check-platform-reqs
+    - composer audit
+    - vendor/bin/pest --compact --fail-on-warning --log-junit ../test-results/phpunit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: test-results/phpunit.xml
+    expire_in: 1 week
 
-build:
-  stage: build
-  image: node:12-alpine
-
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-
+build-assets:
+  stage: test
+  image: oven/bun:1.4.4-alpine
+  interruptible: true
+  timeout: 15m
+  before_script:
+    - apk add --no-cache nodejs
+  script:
+    - cd proxy
+    - bun install --frozen-lockfile
+    - bun audit
+    - bun run build
   artifacts:
     paths:
-      - front/dist
-    expire_in: 2 weeks
+      - proxy/public/build/
+    expire_in: 1 week
 
-  before_script:
-    - cd front
-    - npm ci
-
-  script:
-    - npm run production
-
-.docker-build:
-  stage: build
-  image: docker:19.03.1
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-
-  services:
-    - docker:dind
-  variables:
-    DOCKER_DRIVER: overlay2
-    DOCKER_HOST: tcp://docker:2375/
-
-docker-build-app:
-  extends: .docker-build
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-  script:
-    - ci/build.sh app
-
-docker-build-exim:
-  extends: .docker-build
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-  script:
-    - ci/build.sh exim
-
-docker-build-nginx:
-  extends: .docker-build
-  rules:
-    # skip when building gitlab pages
-    - if: '$LANDING == null'
-      when: on_success
-    - when: never
-  script:
-    - ci/build.sh nginx
-
-docker-build-base:
-  extends: .docker-build
-  # Run this only on base tags
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /^base-.*/'
-      when: on_success
-    - when: never
-
-  script:
-    - ci/build-base.sh
-
-pages:
+deploy-staging:
   stage: deploy
-  image: busybox
+  image: alpine:3.24
+  needs: [verify-proxy, build-assets]
+  resource_group: escriptorium-staging
+  interruptible: false
+  timeout: 30m
+  environment:
+    name: staging
+    url: https://escriptorium.netseven.work
   rules:
-    # run this job only on manual trigger in GitLab web ui
-    - if: '$CI_PIPELINE_SOURCE == "web"'
+    - if: '$CI_COMMIT_BRANCH == "stage" && $CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+      allow_failure: false
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - cp "$STAGING_SSH_PRIVATE_KEY" ~/.ssh/id_ed25519
+    - cp "$STAGING_SSH_KNOWN_HOSTS" ~/.ssh/known_hosts
+    - chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
   script:
-    # install npm deps and build storybook
-    - echo "The site will be deployed to $CI_PAGES_URL"
-  artifacts:
-    paths:
-      - public
+    - ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -i ~/.ssh/id_ed25519 -p 22 sysadmin@46.62.210.138 "deploy $CI_COMMIT_SHA"

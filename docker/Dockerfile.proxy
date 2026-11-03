@@ -1,56 +1,41 @@
 # Laravel Proxy Dockerfile
-# PHP 8.4-FPM with extensions for Laravel + Bun for asset compilation
+# PHP 8.5-FPM with extensions for Laravel + Bun for asset compilation
 
-FROM php:8.4-fpm-alpine AS base
+# Pin the multi-platform image (PHP 8.5.12, Alpine 3.24) for reproducible builds.
+FROM serversideup/php:8.5.12-fpm-alpine@sha256:ef38dad515efd3b77288762f017feea5689239a46ca47de012a7adc4234875ff AS base
+
+# Existing bind mounts and startup tasks require root. FPM workers retain the
+# Alpine www-data UID/GID (82:82), configured by the ServerSideUp entrypoint.
+USER root
+
+# Keep the application's startup tasks and existing FPM concurrency. Compose
+# defines service health checks; queue workers must not inherit an FPM check.
+ENV AUTORUN_ENABLED=false \
+    SHOW_WELCOME_MESSAGE=false \
+    PHP_FPM_PM_MAX_CHILDREN=5
+HEALTHCHECK NONE
 
 # Install system dependencies
 RUN apk add --no-cache \
     git \
     curl \
-    libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
-    libzip-dev \
     zip \
     unzip \
-    oniguruma-dev \
-    icu-dev \
     mariadb-client \
-    postgresql-dev \
     supervisor \
-    fcgi
+    nodejs
 
-# Install PHP extensions
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) \
-    pdo \
-    pdo_mysql \
-    pdo_pgsql \
-    mbstring \
+# PDO drivers, mbstring, pcntl, Redis, zip, Composer and php-fpm-healthcheck
+# are included in the base. PHP 8.5 includes OPcache in the runtime itself.
+RUN install-php-extensions \
     exif \
-    pcntl \
     bcmath \
     gd \
-    zip \
-    intl \
-    opcache
+    intl
 
-# Install Redis extension
-RUN apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
-    && pecl install redis \
-    && docker-php-ext-enable redis \
-    && apk del .build-deps
-
-# Install php-fpm-healthcheck
-RUN curl -o /usr/local/bin/php-fpm-healthcheck \
-    https://raw.githubusercontent.com/renatomefi/php-fpm-healthcheck/master/php-fpm-healthcheck \
-    && chmod +x /usr/local/bin/php-fpm-healthcheck
-
-# Enable PHP-FPM status page for healthcheck
-RUN echo "pm.status_path = /status" >> /usr/local/etc/php-fpm.d/zz-docker.conf
-
-# Install Composer
-COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
+# Keep the existing development/production php.ini and application overrides.
+# ServerSideUp's full php.ini would otherwise override them from conf.d.
+RUN rm "$PHP_INI_DIR/conf.d/serversideup-docker-php.ini"
 
 # Install Bun (using official binary for Alpine/musl)
 RUN apk add --no-cache bash \
@@ -60,6 +45,9 @@ ENV PATH="/root/.bun/bin:${PATH}"
 
 # Set working directory
 WORKDIR /var/www/html
+
+# Disable session upload progress before request parsing (CVE-2026-115560).
+RUN echo "session.upload_progress.enabled=0" > "$PHP_INI_DIR/conf.d/session-security.ini"
 
 # Copy entrypoint script
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -83,7 +71,7 @@ COPY proxy/ .
 RUN composer dump-autoload --optimize
 
 # Copy Bun files and install dependencies
-RUN bun install
+RUN bun install --frozen-lockfile
 
 # PHP configuration for development
 RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
@@ -94,7 +82,7 @@ COPY docker/php-uploads.ini "$PHP_INI_DIR/conf.d/uploads.ini"
 # Expose PHP-FPM port
 EXPOSE 9000
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["docker-php-serversideup-entrypoint", "/usr/local/bin/entrypoint.sh"]
 CMD ["php-fpm"]
 
 # -------------------------------------------
@@ -115,7 +103,7 @@ COPY proxy/ .
 RUN composer dump-autoload --optimize --classmap-authoritative
 
 # Build assets with Bun (need devDependencies for vite)
-RUN bun install \
+RUN bun install --frozen-lockfile \
     && bun run build \
     && rm -rf node_modules
 
@@ -140,5 +128,5 @@ RUN chown -R www-data:www-data /var/www/html \
 # Expose PHP-FPM port
 EXPOSE 9000
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["docker-php-serversideup-entrypoint", "/usr/local/bin/entrypoint.sh"]
 CMD ["php-fpm"]
