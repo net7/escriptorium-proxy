@@ -9,3 +9,16 @@ ci/
 .idea
 variables.env
 .python-version
+
+# Install proxy dependencies and compile assets inside the image.
+proxy/vendor/
+proxy/node_modules/
+proxy/.env*
+proxy/auth.json
+proxy/public/build/
+proxy/public/hot
+proxy/storage/logs/*.log
+proxy/storage/framework/cache/data/
+proxy/storage/framework/sessions/*
+proxy/storage/framework/views/*.php
+proxy/bootstrap/cache/*.php

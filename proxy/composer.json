@@ -62,6 +62,7 @@
         ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force",
+            "@putenv CACHE_STORE=array",
             "@php artisan boost:update --ansi"
         ],
         "post-root-package-install": [

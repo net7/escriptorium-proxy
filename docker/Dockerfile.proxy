@@ -1,7 +1,7 @@
 # Laravel Proxy Dockerfile
 # PHP 8.4-FPM with extensions for Laravel + Bun for asset compilation
 
-FROM php:8.4-fpm-alpine AS base
+FROM php:8.4.27-fpm-alpine AS base
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -18,6 +18,7 @@ RUN apk add --no-cache \
     mariadb-client \
     postgresql-dev \
     supervisor \
+    nodejs \
     fcgi
 
 # Install PHP extensions
@@ -61,6 +62,9 @@ ENV PATH="/root/.bun/bin:${PATH}"
 # Set working directory
 WORKDIR /var/www/html
 
+# Disable session upload progress before request parsing (CVE-2026-115560).
+RUN echo "session.upload_progress.enabled=0" > "$PHP_INI_DIR/conf.d/session-security.ini"
+
 # Copy entrypoint script
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
@@ -83,7 +87,7 @@ COPY proxy/ .
 RUN composer dump-autoload --optimize
 
 # Copy Bun files and install dependencies
-RUN bun install
+RUN bun install --frozen-lockfile
 
 # PHP configuration for development
 RUN mv "$PHP_INI_DIR/php.ini-development" "$PHP_INI_DIR/php.ini"
@@ -115,7 +119,7 @@ COPY proxy/ .
 RUN composer dump-autoload --optimize --classmap-authoritative
 
 # Build assets with Bun (need devDependencies for vite)
-RUN bun install \
+RUN bun install --frozen-lockfile \
     && bun run build \
     && rm -rf node_modules
 
